@@ -1,5 +1,5 @@
-import sqlite3 from "sqlite3";
-import sqliteToJson from "sqlite-to-json";
+const sqlite3 = require("sqlite3");
+const sqliteToJson = require("sqlite-to-json");
 
 function getAllTables(path: string) {
   return new Promise((resolve, reject) => {
