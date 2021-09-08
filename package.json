@@ -5,7 +5,7 @@
   "main": "dist/mod.js",
   "scripts": {
     "test": "jest",
-    "build": "rollup --config rollup.config.js --configPlugin typescript"
+    "build": "rollup --config rollup.config.js"
   },
   "keywords": [],
   "author": "Ezell Frazier",
@@ -15,14 +15,16 @@
     "sqlite3": "^5.0.2"
   },
   "devDependencies": {
-    "jest": "^27.1.0",
     "@rollup/plugin-commonjs": "^20.0.0",
     "@rollup/plugin-json": "^4.1.0",
     "@rollup/plugin-node-resolve": "^13.0.4",
     "@rollup/plugin-typescript": "^8.2.5",
     "@types/jest": "^27.0.1",
     "@types/sqlite3": "^3.1.7",
+    "jest": "^27.1.0",
     "rollup": "^2.56.3",
-    "ts-node": "^10.2.1"
+    "ts-node": "^10.2.1",
+    "tslib": "^2.3.1",
+    "typescript": "^4.4.2"
   }
 }
