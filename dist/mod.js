@@ -88,9 +88,11 @@ function getDirectory(path) {
         fs.readdir(path, function (err, files) {
             if (err)
                 reject(err);
-            resolve(files.map(function (filename) { return ({
-                name: filename.split(".")[0],
-                path: path + "/" + filename,
+            resolve(files
+                .filter(function (filename) { return filename.includes('cdb'); })
+                .map(function (filename) { return ({
+                name: filename.split('.')[0],
+                path: path + "/" + filename
             }); }));
         });
     });
