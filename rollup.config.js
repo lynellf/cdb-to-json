@@ -8,12 +8,16 @@ export default {
   output: {
     file: "dist/mod.js",
     format: "cjs",
-    exports: "auto",
+    exports: "auto"
   },
   plugins: [
     // commonjs(),
-    typescript({ tsconfig: "./tsconfig.json" }),
+    typescript({
+      tsconfig: "./tsconfig.json",
+      sourceMap: false,
+      declarationDir: "types"
+    }),
     nodeResolve(),
-    json(),
-  ],
+    json()
+  ]
 };
