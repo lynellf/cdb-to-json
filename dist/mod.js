@@ -99,13 +99,15 @@ function getDirectory(path) {
 }
 
 function mod(inputDir, outputDir, options) {
-    if (options === void 0) { options = { emit: true }; }
+    if (options === void 0) { options = { emit: true, ignore: [] }; }
     return __awaiter(this, void 0, void 0, function () {
         var files, tables;
         var _this = this;
         return __generator(this, function (_a) {
             switch (_a.label) {
-                case 0: return [4 /*yield*/, getDirectory(inputDir).catch(console.error)];
+                case 0: return [4 /*yield*/, getDirectory(inputDir).then(function (fileList) {
+                        return fileList.filter(function (file) { var _a; return !((_a = options === null || options === void 0 ? void 0 : options.ignore) !== null && _a !== void 0 ? _a : []).includes(file.name); });
+                    }).catch(console.error)];
                 case 1:
                     files = _a.sent();
                     if (!files) return [3 /*break*/, 3];
