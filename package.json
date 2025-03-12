@@ -1,6 +1,6 @@
 {
   "name": "cdb-to-json",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Convert Sqlite Files to JSON",
   "main": "app/mod.js",
   "type": "module",
