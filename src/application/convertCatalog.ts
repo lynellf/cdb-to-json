@@ -6,7 +6,8 @@
  * Process databases sequentially. Returns one aggregate result.
  */
 
-import { iterateRawCards } from "../cdb/iterateRows.js";
+import { iterateRawCards, type ExtraTableMetadata } from "../cdb/iterateRows.js";
+import { probeNativeCapability } from "../destinations/secureDestination.js";
 import { discoverInputs } from "../discovery/discoverCdbInputs.js";
 import { DiagnosticCollector, type DiagnosticSummary } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
@@ -17,7 +18,7 @@ import { RawEnvelopeBuilder } from "../profiles/rawProfile.js";
 import { serializeJson } from "../serialization/canonicalJson.js";
 import { JsonLinesWriter } from "../serialization/jsonLinesWriter.js";
 import type { ExitCodeState } from "../cli/exitCodes.js";
-import { computeFileHash } from "../hashing/sha256.js";
+
 
 /**
  * Simple writer interface for output streams.
@@ -121,7 +122,7 @@ export async function convert(
     // Profile not available (card/source in Phase 2)
     if (planResult.plan?.isProfileNotAvailable) {
       topCollector.error(
-        DiagnosticCode.INVALID_PATH,
+        DiagnosticCode.PROFILE_NOT_AVAILABLE,
         `Profile '${options.profile}' is not available in this version. Use 'raw' profile.`
       );
       const summary = topCollector.getSummary();
@@ -146,6 +147,114 @@ export async function convert(
         },
         state: "ABORTED",
       };
+    }
+
+    // Phase 1b: Structural destination preflight
+    // File and directory destinations require native secure-destination capability.
+    // This check runs before discoverInputs() and before any SQLite access.
+    if (options.destination.kind === "file" || options.destination.kind === "directory") {
+      const capability = probeNativeCapability();
+      if (!capability.supported) {
+        topCollector.error(
+          DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM,
+          capability.error ?? "Secure destination is not supported on this platform",
+          { details: { destinationKind: options.destination.kind } }
+        );
+        const summary = topCollector.getSummary();
+        return {
+          sources: [],
+          cardCount: 0,
+          warningCount: summary.warningCount,
+          errorCount: summary.errorCount,
+          exitCodeState: {
+            optionError: false,
+            hasUsableInput: false,
+            inputError: false,
+            strictFailure: false,
+            resourceOrIntegerFailure: false,
+            mergeCollision: false,
+            outputError: true,
+            cancelled: false,
+            continued: false,
+            completedInputCount: 0,
+            failedInputCount: 0,
+            internalError: false,
+          },
+          state: "ABORTED",
+        };
+      }
+
+      // For file destination with --force: check if final file exists.
+      // Phase 2 does not implement identity-guarded replace; --force with an
+      // existing regular final returns UNSAFE_DESTINATION_FILESYSTEM (exit 6).
+      if (options.destination.kind === "file" && options.force && options.destination.path) {
+        const { lstat } = await import("node:fs/promises");
+        try {
+          const stat = await lstat(options.destination.path);
+          if (stat.isFile() || stat.isSymbolicLink()) {
+            // Existing file with --force: unsupported in Phase 2
+            topCollector.error(
+              DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM,
+              `Output file exists and --force is specified, but identity-guarded replacement is not supported in this version. Use a non-existing path.`,
+              { details: { existingPath: options.destination.path } }
+            );
+            const summary = topCollector.getSummary();
+            return {
+              sources: [],
+              cardCount: 0,
+              warningCount: summary.warningCount,
+              errorCount: summary.errorCount,
+              exitCodeState: {
+                optionError: false,
+                hasUsableInput: false,
+                inputError: false,
+                strictFailure: false,
+                resourceOrIntegerFailure: false,
+                mergeCollision: false,
+                outputError: true,
+                cancelled: false,
+                continued: false,
+                completedInputCount: 0,
+                failedInputCount: 0,
+                internalError: false,
+              },
+              state: "ABORTED",
+            };
+          }
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ENOTDIR") {
+            // Unexpected error; treat as output error
+            topCollector.error(
+              DiagnosticCode.OUTPUT_WRITE_FAILED,
+              `Failed to check output destination: ${err instanceof Error ? err.message : String(err)}`
+            );
+            const summary = topCollector.getSummary();
+            return {
+              sources: [],
+              cardCount: 0,
+              warningCount: summary.warningCount,
+              errorCount: summary.errorCount,
+              exitCodeState: {
+                optionError: false,
+                hasUsableInput: false,
+                inputError: false,
+                strictFailure: false,
+                resourceOrIntegerFailure: false,
+                mergeCollision: false,
+                outputError: true,
+                cancelled: false,
+                continued: false,
+                completedInputCount: 0,
+                failedInputCount: 0,
+                internalError: false,
+              },
+              state: "ABORTED",
+            };
+          }
+          // ENOENT/ENOTDIR: path does not exist, proceed
+        }
+      }
     }
 
     // Validate limit relations
@@ -251,38 +360,41 @@ export async function convert(
       const dbCollector = new DiagnosticCollector();
       let dbSha256 = "";
       let dbCardCount = 0;
-
-      try {
-        // Compute file hash
-        dbSha256 = await computeFileHash(input.path);
-      } catch (error) {
-        dbCollector.error(
-          DiagnosticCode.CDB_OPEN_FAILED,
-          `Failed to hash database file: ${error instanceof Error ? error.message : String(error)}`
-        );
-        failedInputCount++;
-        topCollector.merge(dbCollector);
-        if (!options.continueOnError) break;
-        continue;
-      }
+      let dbSourceSize = 0;
+      let dbExtraTables: ExtraTableMetadata[] = [];
 
       // Build the raw envelope for this database
       const envelopeBuilder = new RawEnvelopeBuilder({
         fileName: input.name,
         sha256: dbSha256,
-        sizeBytes: input.sizeBytes,
+        sizeBytes: dbSourceSize,
+        extraTables: dbExtraTables,
       });
 
       try {
-        // Read rows via the async iterator
+        // Read rows via the async iterator, collecting metadata via callback
+        // Read rows via the async iterator, collecting metadata via callback.
+        // The callback fires once after preflight checks, before row iteration.
         for await (const cardRow of iterateRawCards(input.path, {
           signal: options.signal,
           limits: options.limits,
           diagnostics: dbCollector,
+          onMetadata: (meta) => {
+            dbSha256 = meta.bundleHash;
+            dbSourceSize = meta.sourceSizeBytes;
+            dbExtraTables = [...meta.extraTables];
+          },
         })) {
           envelopeBuilder.addCard(cardRow);
           dbCardCount++;
         }
+
+        // Update envelope metadata after iteration (callback fires before first yield)
+        envelopeBuilder.updateMetadata({
+          sha256: dbSha256,
+          sizeBytes: dbSourceSize,
+          extraTables: dbExtraTables,
+        });
       } catch (error) {
         if (options.signal?.aborted) {
           dbCollector.error(DiagnosticCode.CANCELLED, "Conversion cancelled", {

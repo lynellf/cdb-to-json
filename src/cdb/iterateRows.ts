@@ -16,6 +16,33 @@ import { DiagnosticCollector } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
 
 /**
+ * Metadata about extra tables (non-card tables).
+ */
+export interface ExtraTableMetadata {
+  name: string;
+  columns: readonly string[];
+  rowCount: number;
+}
+
+/**
+ * Database metadata exposed after snapshot acquisition and WAL materialization.
+ */
+export interface RawDatabaseMetadata {
+  /** SHA-256 hash of the verified physical snapshot bundle (with 'sha256:' prefix) */
+  bundleHash: string;
+  /** Size of the original source .cdb main file in bytes */
+  sourceSizeBytes: number;
+  /** Metadata for non-card tables (empty array if none) */
+  extraTables: readonly ExtraTableMetadata[];
+}
+
+/**
+ * Callback to receive database metadata before row iteration begins.
+ * Called once after snapshot acquisition, WAL materialization, and preflight checks.
+ */
+export type MetadataCallback = (metadata: RawDatabaseMetadata) => void;
+
+/**
  * Options for reading card rows as an async iterator.
  */
 export interface IterateRawCardsOptions {
@@ -23,6 +50,13 @@ export interface IterateRawCardsOptions {
   limits?: LimitsV1;
   strict?: boolean;
   diagnostics?: DiagnosticCollector;
+  /**
+   * Optional callback invoked once with verified database metadata
+   * after snapshot acquisition and WAL materialization, before row iteration.
+   * Allows the caller to obtain bundle hash and extra-table metadata
+   * without opening the source twice.
+   */
+  onMetadata?: MetadataCallback;
 }
 
 // Checkpoint counter for yield/signal interleaving
@@ -38,7 +72,7 @@ export async function* iterateRawCards(
   databasePath: string,
   options: IterateRawCardsOptions = {}
 ): AsyncIterableIterator<RawCardRows> {
-  const { signal, limits, diagnostics } = options;
+  const { signal, limits, diagnostics, onMetadata } = options;
   const maxRowsPerTable = limits?.maxRowsPerTable ?? 1_000_000;
   const maxTextBytes = limits?.maxTextBytes ?? 4 * 1024 * 1024;
   const maxSnapshotBytes = limits?.maxSnapshotBytes ?? 4 * 1024 * 1024 * 1024;
@@ -151,6 +185,44 @@ export async function* iterateRawCards(
     }
 
     checkAborted(signal);
+
+    // Phase 4d: Collect extra-table metadata
+    const extraTables: ExtraTableMetadata[] = [];
+    try {
+      const tableInfos = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('datas','texts') ORDER BY name"
+        )
+        .all() as { name: string }[];
+      for (const { name } of tableInfos) {
+        try {
+          const cols = db
+            .prepare(`PRAGMA table_info("${name}")`)
+            .all() as { name: string }[];
+          const countResult = db
+            .prepare(`SELECT COUNT(*) AS cnt FROM "${name}"`)
+            .get() as { cnt: number };
+          extraTables.push({
+            name,
+            columns: cols.map((c) => c.name),
+            rowCount: countResult.cnt,
+          });
+        } catch {
+          // Skip tables that cannot be queried
+        }
+      }
+    } catch {
+      // No extra tables
+    }
+
+    // Emit metadata via callback before row iteration
+    if (onMetadata) {
+      onMetadata({
+        bundleHash: `sha256:${snapshotBundle!.bundleHash}`,
+        sourceSizeBytes: snapshotBundle!.totalBytes,
+        extraTables,
+      });
+    }
 
     // Phase 5: Execute the bounded CTE join query
     const joinSql = `

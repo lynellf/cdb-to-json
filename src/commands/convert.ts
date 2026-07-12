@@ -9,6 +9,7 @@ import { convert as convertService } from "../application/convertCatalog.js";
 import { createStdoutDestination } from "../destinations/stdoutDestination.js";
 import { computeExitCode } from "../cli/exitCodes.js";
 import { validateOutputPlan } from "../application/outputPlan.js";
+import { DiagnosticCode } from "../diagnostics/codes.js";
 
 export interface ConvertCommandResult {
   exitCode: number;
@@ -32,9 +33,25 @@ export async function executeConvert(
   }
   if (plan.plan?.isProfileNotAvailable) {
     streams.stderr.write(
-      `Error: Profile '${options.profile}' is not available in this release. Use 'raw' profile.\n`
+      `[ERROR] ${DiagnosticCode.PROFILE_NOT_AVAILABLE}: Profile '${options.profile}' is not available in this release. Use 'raw' profile.\n`
     );
     return { exitCode: 2, sourceCount: 0, cardCount: 0 };
+  }
+
+  // Structural preflight: file/directory destinations require native capability.
+  // This check is also performed in convertService, but we perform it here
+  // to ensure it fails before discoverInputs() is called in any path.
+  if (
+    (options.destination.kind === "file" || options.destination.kind === "directory")
+  ) {
+    const { probeNativeCapability } = await import("../destinations/secureDestination.js");
+    const capability = probeNativeCapability();
+    if (!capability.supported) {
+      streams.stderr.write(
+        `[ERROR] UNSAFE_DESTINATION_FILESYSTEM: ${capability.error ?? "Secure destination is not supported on this platform"}\n`
+      );
+      return { exitCode: 6, sourceCount: 0, cardCount: 0 };
+    }
   }
 
   const dataWriter = createStdoutDestination(streams.stdout);

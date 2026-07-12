@@ -5,7 +5,21 @@
  * One envelope per database, not per card.
  */
 
-import type { RawCardRows, RawDatasRow, RawTextsRow } from "../cdb/rawTypes.js";
+import type {
+  RawCardRows,
+  RawDatasRow,
+  RawTextsRow,
+} from "../cdb/rawTypes.js";
+import type { ExtraTableMetadata } from "../cdb/iterateRows.js";
+
+/**
+ * Extra table metadata entry.
+ */
+export interface RawExtraTable {
+  name: string;
+  columns: string[];
+  rowCount: number;
+}
 
 /**
  * Raw profile output envelope (one per database).
@@ -23,6 +37,7 @@ export interface RawDatabaseEnvelope {
     datas: RawDatasRow[];
     texts: RawTextsRow[];
   };
+  extraTables?: RawExtraTable[];
 }
 
 /**
@@ -32,6 +47,7 @@ export interface DatabaseSourceMetadata {
   fileName: string;
   sha256: string;
   sizeBytes: number;
+  extraTables?: readonly ExtraTableMetadata[];
 }
 
 /**
@@ -41,10 +57,23 @@ export interface DatabaseSourceMetadata {
 export class RawEnvelopeBuilder {
   private readonly datasRows: RawDatasRow[] = [];
   private readonly textsRows: RawTextsRow[] = [];
-  private readonly sourceMeta: DatabaseSourceMetadata;
+  private sourceMeta: DatabaseSourceMetadata;
 
   constructor(sourceMeta: DatabaseSourceMetadata) {
     this.sourceMeta = sourceMeta;
+  }
+
+  /**
+   * Update source metadata after initial construction.
+   * Called after the metadata callback fires during row iteration.
+   */
+  updateMetadata(meta: { sha256: string; sizeBytes: number; extraTables: readonly ExtraTableMetadata[] }): void {
+    this.sourceMeta = {
+      ...this.sourceMeta,
+      sha256: meta.sha256,
+      sizeBytes: meta.sizeBytes,
+      extraTables: meta.extraTables,
+    };
   }
 
   /**
@@ -64,6 +93,12 @@ export class RawEnvelopeBuilder {
    * Resets internal accumulators.
    */
   build(): RawDatabaseEnvelope {
+    const extraTables = this.sourceMeta.extraTables?.map((t) => ({
+      name: t.name,
+      columns: [...t.columns],
+      rowCount: t.rowCount,
+    }));
+
     const envelope: RawDatabaseEnvelope = {
       schema: "cdb.raw/1",
       integerEncoding: "signed-int64-decimal",
@@ -77,6 +112,7 @@ export class RawEnvelopeBuilder {
         datas: [...this.datasRows],
         texts: [...this.textsRows],
       },
+      ...(extraTables && extraTables.length > 0 ? { extraTables } : {}),
     };
 
     // Clear accumulators after building

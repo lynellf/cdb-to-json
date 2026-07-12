@@ -4,7 +4,7 @@
   "title": "CDB Raw Profile",
   "description": "Lossless extraction of CDB database tables as raw JSON.",
   "type": "object",
-  "required": ["schema", "source", "tables"],
+  "required": ["schema", "integerEncoding", "source", "tables"],
   "properties": {
     "schema": {
       "const": "cdb.raw/1",
@@ -19,7 +19,11 @@
       "required": ["fileName", "sha256", "sizeBytes", "converter"],
       "properties": {
         "fileName": { "type": "string" },
-        "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "sha256": {
+          "type": "string",
+          "description": "Verified physical snapshot bundle SHA-256 hash prefixed with 'sha256:'",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
         "sizeBytes": { "type": "integer", "minimum": 0 },
         "converter": { "const": "cdb-to-json/2.0.0" }
       }
@@ -75,6 +79,22 @@
               "str16": { "type": ["string", "null"] }
             }
           }
+        }
+      }
+    },
+    "extraTables": {
+      "type": "array",
+      "description": "Metadata for non-card tables (table name, columns, row count). Not a data dump.",
+      "items": {
+        "type": "object",
+        "required": ["name", "columns", "rowCount"],
+        "properties": {
+          "name": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rowCount": { "type": "integer", "minimum": 0 }
         }
       }
     }

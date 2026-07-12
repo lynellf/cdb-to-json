@@ -18,9 +18,11 @@ npm run test:compat
 npm run package:check
 ```
 
-Record the baseline. The current Node runtime may produce an unsupported native
-capability manifest; that is expected until a supported Node 22 Linux build is
-used. Do not make the unsupported host pass file output by adding a JavaScript
+Record the baseline. Node major >=22 on Linux x64/arm64 is build-eligible, but
+file/directory support is determined by the post-build capability manifest and
+runtime primitive probe, not by a version string. The current Node 26 baseline
+may legitimately produce an unsupported manifest; do not hard-code that outcome,
+and never make an unsupported host pass file output by adding a JavaScript
 fallback.
 
 ## Task 2.1 — Freeze parsing, normalized options, and pre-open output planning
@@ -41,10 +43,12 @@ fallback.
 - `src/commands/inspect.ts` (new)
 - `src/commands/validate.ts` (new)
 - `src/commands/schema.ts` (new)
-- `src/diagnostics/codes.ts` only if a dedicated profile-capability code is needed
+- `src/diagnostics/codes.ts` to freeze `PROFILE_NOT_AVAILABLE` for the
+  unavailable card/source capability
 - `tests/cli/parseArgs.test.ts` (new)
 - `tests/cli/commandMatrix.test.ts` (new)
 - `tests/cli/exitCodes.test.ts` (extend existing)
+- `tests/cli/limitRelations.test.ts` (extend the exact inherited R5.6 gate)
 
 ### Implementation contract
 
@@ -89,23 +93,33 @@ fallback.
    `discoverInputs()` and no method may open SQLite. Use an internal `auto` mode
    if the public default must become `split=none` for one discovered input and
    `split=database` for multiple unmerged inputs.
-5. Validate before discovery/snapshot/open where possible:
-   profile capability, format/profile/split/merge/conflict combinations, raw
-   merge/card-split rejection, JSONL/pretty, stdout cardinality rules that are
-   knowable from explicit inputs, destination kind, numeric limits, and missing
-   output values. After discovery but before any snapshot/open, validate concrete
-   output count, source/output identity, fresh split root, filename collisions,
-   and native capability. Structural invalid cases must be tested with a spy that
-   proves the discovery/reader boundary was not crossed as required by the plan.
-6. Create command handlers. `convert` delegates only to the application service;
+5. Run structural destination preflight before `discoverInputs()` and before
+   any snapshot/open: acquire a trusted existing parent descriptor, validate the
+   destination leaf, reject an existing split root with `OUTPUT_DIRECTORY_EXISTS`,
+   and run a side-effect-contained probe on the selected filesystem for
+   no-symlink traversal, exclusive lease/temp creation, and no-replace publication.
+   Failure returns `UNSAFE_DESTINATION_FILESYSTEM`. These checks do not call
+   discovery. Then, after deterministic discovery but still before any snapshot/
+   open, validate concrete output count, source/output identity, and filename
+   collisions. Only cardinality-dependent checks belong in this second stage;
+   fresh-root existence and capability MUST NOT be deferred to it. Hold the
+   opaque lease through staging and repeat descriptor-based device/inode/type
+   identity checks immediately before `COMMITTING`. Structural invalid cases must
+   be tested with a discovery spy that proves the boundary was not crossed.
+6. Validate profile capability before discovery: unavailable `card`/`source`
+   conversion emits `PROFILE_NOT_AVAILABLE` (exit `2`) and never uses
+   `INVALID_PATH` as a substitute. A non-UTF-8 database is diagnosed later by
+   the reader as `UNSUPPORTED_DATABASE_ENCODING` (exit `4`); wrong text storage
+   class is `INVALID_TEXT_VALUE` (exit `4`) before text-size checks.
+7. Create command handlers. `convert` delegates only to the application service;
    it must not contain SQL, bitmask decoding, text segmentation, or destination
    publication details. `inspect`, `validate`, and `schema` delegate to their
    application modules. Keep stdout/stderr as injected writers.
-7. Update exit-state construction to distinguish option, input, collision,
+8. Update exit-state construction to distinguish option, input, collision,
    output/cancellation, partial, and internal failures. Preserve precedence
    `2 > 3 > 4 > 5 > 6 > 7 > 1`. Ensure output/cancellation can override a pending
    partial result where the operational contract requires it.
-8. Install exactly one SIGINT handler around `convert()` in `main()`, abort the
+9. Install exactly one SIGINT handler around `convert()` in `main()`, abort the
    passed signal, and remove the handler in `finally`. Never call global
    `console.error` from the catch path; use injected stderr.
 
@@ -114,6 +128,7 @@ fallback.
 Add matrix vectors for:
 
 - raw one-input stdout/file, raw multi-input split directory;
+- the exact inherited `tests/cli/limitRelations.test.ts` relation vectors;
 - raw `--merge`, raw `--split card`, raw multi-input `split=none`;
 - stdout with multiple logical outputs;
 - file/directory destination mismatch;
@@ -128,7 +143,7 @@ Run:
 
 ```bash
 npm run build
-npm run test:cli -- --run tests/cli/parseArgs.test.ts tests/cli/commandMatrix.test.ts tests/cli/exitCodes.test.ts
+npm run test:cli -- --run tests/cli/parseArgs.test.ts tests/cli/commandMatrix.test.ts tests/cli/exitCodes.test.ts tests/cli/limitRelations.test.ts
 ```
 
 **Stop condition:** any invalid matrix test reaches discovery, snapshot, or SQLite;
@@ -155,6 +170,12 @@ installed after command completion.
 - `schemas/cdb.raw.v1.schema.json`
 - `schemas/cdb.card-array.v2.schema.json`
 - `schemas/ygo.card-source-array.v1.schema.json`
+- `tests/reader/walMaterialization.test.ts` (extend the exact R5.6 gate)
+- `tests/reader/textByteFidelity.test.ts` (extend the exact R5.6 gate)
+- `tests/reader/physicalSnapshotProvenance.test.ts` (extend the exact R5.6 gate)
+- `tests/reader/stagingSnapshotBudget.test.ts` (extend the exact R5.6 gate)
+- `tests/api/iterateRawCards.test.ts` (extend the exact R5.6 gate)
+- `tests/api/iterateRawCards.types.test.ts` (extend the exact R5.6 gate)
 - `tests/cli/rawProfile.test.ts` (new)
 - `tests/cli/serialization.test.ts` (new)
 - `tests/conformance/rawOutput.test.ts` (new)
@@ -224,8 +245,12 @@ lossless data.
   collecting the array. It must support zero records and one record and expose
   close/abort state.
 - `jsonLinesWriter.ts`: write one compact JSON object per line; reject pretty mode.
-- All writers use a byte-counting/reservation callback before each encoded chunk,
-  then reconcile actual growth. A failed write closes/aborts and reports
+- Every writer enforces `maxOutputBytes` before each encoded UTF-8 chunk and
+  reconciles the actual output count. A private file/directory writer additionally
+  reserves and reconciles its encoded chunks against aggregate `maxStagingBytes`;
+  the stdout writer does not charge encoded chunks to private staging. Snapshot,
+  materialization, spool, lock, and destination temporary files remain covered by
+  the aggregate tracker. A failed write closes/aborts and reports
   `OUTPUT_WRITE_FAILED` or `RESOURCE_LIMIT_EXCEEDED` without changing an existing
   final. Stdout's already-written prefix is allowed to remain.
 
@@ -249,6 +274,7 @@ Run:
 npm run build
 npm run test:reader
 npm run test:compat
+npx vitest run tests/reader/walMaterialization.test.ts tests/reader/textByteFidelity.test.ts tests/reader/physicalSnapshotProvenance.test.ts tests/reader/stagingSnapshotBudget.test.ts tests/cli/limitRelations.test.ts tests/api/iterateRawCards.test.ts tests/api/iterateRawCards.types.test.ts
 npm run test:cli -- --run tests/cli/rawProfile.test.ts tests/cli/serialization.test.ts
 npm run test:conformance -- --run tests/conformance/rawOutput.test.ts
 ```
@@ -276,11 +302,13 @@ a pre-existing final.
 - `native/secure-destination/src/secure_destination.h`
 - `native/secure-destination/src/secure_destination.cc`
 - `native/secure-destination/binding.gyp`
+- `package.json` and `package-lock.json` (exact build-time `node-addon-api` dependency)
 - `scripts/build-native.mjs`
 - `scripts/package-check.mjs`
 - `tests/cli/destinationLifecycle.test.ts` (new)
 - `tests/cli/freshSplitRoot.test.ts` (new)
 - `tests/cli/secureDestinationRace.test.ts` (new)
+- `tests/cli/nativeCapability.test.ts` (new; supported and unsupported manifest branches)
 - `tests/cli/pathSafety.test.ts` (new)
 
 ### Native boundary contract
@@ -288,34 +316,74 @@ a pre-existing final.
 1. `nativeAdapter.ts` is the only module that loads `dist/native/secure_destination.node`,
    translates its return values, and maps `errno`/capability failures to stable
    diagnostics. TypeScript modules do not call native exports directly.
-2. `probeNativeCapability()` must trust a manifest only when the manifest matches
-   the running platform/arch/Node ABI and its SHA-256 matches the module. A
-   successful compilation is insufficient: required `openat2`, no-symlink, and
-   no-replace primitives must be probed. `scripts/build-native.mjs` must treat
-   Node 22+ (not only the string `v22`) as the eligible runtime, and unsupported
-   builds must remove stale binaries and write an explicit unsupported manifest.
-3. Replace path-based native lock/unlock/rename operations in the modern path.
-   The adapter must acquire a trusted root descriptor, traverse relative
-   components with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, create exclusive
-   reservations and temporary siblings relative to that root, and publish with
-   descriptor-relative no-replace or authorized force replacement. The current
-   `AtomicRename` implementation using flags `0` is not an acceptable no-clobber
-   implementation. Do not rely on an unlinked `O_TMPFILE` unless the ABI also
-   provides a proven descriptor-relative publication operation.
-4. `secureDestination.ts` should expose capability, root, reservation, temporary,
-   publish, and cleanup operations with relative names/handles rather than allowing
-   unchecked absolute strings after root acquisition.
-5. On unsupported hosts, file/directory destinations return
-   `UNSAFE_DESTINATION_FILESYSTEM` before snapshot/open. Stdout remains supported.
+2. `package.json` and `package-lock.json` must add the exact build-time
+   `node-addon-api@8.9.0` devDependency. `binding.gyp` must use
+   `<!@(node -p "require('node-addon-api').include")` in `include_dirs` and
+   `<!@(node -p "require('node-addon-api').gyp")` in `dependencies` (while
+   preserving `NAPI_VERSION=9`) so a clean `npm ci && npm run build:native` can
+   resolve the existing `<napi.h>` includes; the implementer must not assume
+   headers are installed globally. `probeNativeCapability()` must trust a
+   manifest only when it matches platform/arch, numeric
+   `process.versions.modules` Node ABI, N-API version, and module SHA-256. A
+   successful compilation is insufficient: required `openat2`, no-symlink,
+   descriptor-relative lock/temp/cleanup, and no-replace primitives must be
+   behaviorally probed on the selected parent filesystem during preflight.
+   `ENOSYS`, `EOPNOTSUPP`, or failed probe cleanup returns
+   `UNSAFE_DESTINATION_FILESYSTEM` before discovery.
+3. `scripts/build-native.mjs` must treat every Node major >=22 on Linux x64/arm64
+   as build-eligible (not only the string `v22`), remove stale binaries on every
+   unsupported or failed build, and write an explicit unsupported manifest. The
+   post-build load/probe result, manifest, and module hash are the support source
+   of truth. A clean supported-candidate gate must build and load the module on
+   Node 22+ and run the primitive probe. Node 26 is not a hard-coded policy case:
+   retain the current unsupported manifest as a valid baseline branch when that
+   build/probe fails, while a future hash-matching manifest may truthfully report
+   support.
+4. Replace path-based native lock/unlock/rename operations in the modern path
+   with opaque native-owned parent/source/lease/temp/stage handles. Only initial
+   trusted parent/source acquisition accepts a path; subsequent operations accept
+   handles plus validated single leaf names. Native code rejects NUL, separators,
+   absolute names, empty/`.`/`..` components. `AtomicRename` with flags `0` is
+   not an acceptable no-clobber implementation: absent-final publication (with or
+   without `--force`) must use `RENAME_NOREPLACE`; an existing regular final with
+   `--force` is unsupported in this package and returns
+   `UNSAFE_DESTINATION_FILESYSTEM` before discovery. No identity-check-plus-
+   ordinary-rename fallback is permitted. Publish must return `COMMITTED`,
+   `NOT_COMMITTED`, or `INDETERMINATE`. Never retry an indeterminate result or
+   recursively delete an unproven tree. Do not rely on an unlinked `O_TMPFILE`
+   unless descriptor-relative publication is proven.
+5. `secureDestination.ts` exposes those opaque capability, root, source,
+   reservation, temporary, stage, publish, and cleanup operations. The fixed
+   lease record is `cdb-destination-lock/1` with token/PID/creation-time/scope/
+   leaf, created `O_CREAT|O_EXCL|O_NOFOLLOW`; only `ESRCH` is stale, while `0`
+   and `EPERM` are live. Malformed/partial/symlink/PID-present locks refuse even
+   with force, and release requires the matching handle/token.
+6. On unsupported hosts, the structural destination preflight returns
+   `UNSAFE_DESTINATION_FILESYSTEM` before `discoverInputs()`, snapshot, or open.
+   Stdout remains supported.
 
 ### Destination and budget contract
 
 - `stdoutDestination` writes only through the injected stdout writer and is
-  non-atomic by contract.
+  non-atomic by contract. It enforces `maxOutputBytes`, but does not reserve its
+  encoded chunks against `maxStagingBytes`; that aggregate budget applies only to
+  private files and private state.
 - `fileDestination` stages a single file, holds its reservation, and publishes
-  atomically. `--force` is checked only after reservation; no-force is no-clobber.
-- `directoryDestination` creates only a fresh split root, then stages and commits
-  deterministic child files. It must reject both empty and populated existing roots.
+  atomically. Its private encoded chunks enforce both `maxOutputBytes` and
+  aggregate `maxStagingBytes`. No-force with an existing regular final reports
+  the output conflict; force with such an incumbent takes the explicit
+  `UNSAFE_DESTINATION_FILESYSTEM` unsupported branch before discovery. Force
+  with an absent final uses `RENAME_NOREPLACE`, and a newly appearing final is
+  preserved. Symlink, directory, source-identity, and input-hardlink finals are
+  rejected regardless of force.
+- `directoryDestination` never creates the final root during preflight. It holds
+  a descriptor-relative lease, stages deterministic child files in a private `0700`
+  sibling, verifies exactly the owned entries, and publishes the entire stage once
+  with descriptor-relative `RENAME_NOREPLACE`. It rejects both empty and populated
+  existing roots and never adopts a root created by a race. No-continue aborts
+  without a final root after any pre-barrier failure; continue-on-error commits
+  successful input children once and returns exit 7. Unknown entries are never
+  recursively deleted.
 - `atomicFile` owns temporary sibling creation, byte reservation, flush/close,
   pre-commit abort, publication, and cleanup. It must preserve a pre-existing
   final on every pre-commit error.
@@ -323,33 +391,66 @@ a pre-existing final.
   destination temporary files, lock/reservation records, and future private state
   reserve before growth and reconcile/release exactly once. Thread the tracker
   through the reader lifecycle; do not use `null` for Phase 2 destination runs.
-- Conversion owns cleanup order: stop iteration, close writer, close SQLite,
-  verify snapshot, remove materialized/snapshot/spool/temp/lock/reservation state,
-  then publish only at the synchronous commit barrier. A post-barrier signal cannot
-  undo or relabel a committed file.
+  Do not route stdout encoded chunks through this tracker.
+- Conversion owns cleanup order: stop iteration and close/flush the writer,
+  close reader-owned SQLite/materialized/snapshot resources, and reconcile their
+  private staging after reading. Retain SourceHandle, its source-parent handle,
+  and the trusted destination ParentHandle/LeaseHandle through the final native
+  source/output device/inode/type recheck and synchronous commit barrier; release
+  or close those retained handles in `finally` after definite publication or
+  one-time indeterminate reconciliation. Reject source/final symlinks and
+  hardlinks even with force. A post-barrier signal cannot undo or relabel a
+  committed file. Cleanup may remove only owned handles and never recursively
+  deletes an adopted or attacker-modified tree; lifecycle tests must prove no
+  retained handle closes before the final recheck.
 
 ### Tests and verification
 
 - unsupported platform/manifest: exit 6 before a spy reader/snapshot call;
 - supported capability matrix: descriptor-relative root, symlink rejection,
   parent-directory swap, input/output collision recheck, live/malformed/stale
-  locks, no-force race, force/no-force race, and no output escape;
+  locks, no-force race, and absent-final force/no-force races; an existing regular
+  final with `--force` must take the explicit `UNSAFE_DESTINATION_FILESYSTEM`
+  unsupported branch before discovery, with no expected-present CAS or plain
+  rename fallback, and no output may escape the trusted root;
 - file writer failure, resource failure, cancellation before/during/after commit,
-  and pre-existing-final byte preservation;
+  and pre-existing-final byte preservation; lifecycle assertions prove reader-
+  owned resources close after reading while SourceHandle, ParentHandle, and
+  LeaseHandle stay open through final identity recheck and the commit barrier;
+
 - fresh split root rejects existing empty/populated roots even with `--force`;
-- aggregate staging rejects snapshot/materialized/output growth before a write.
+- aggregate staging rejects snapshot/materialized/private-output growth before
+  a write, while stdout tests prove that `maxOutputBytes` is enforced without
+  consuming private-staging budget;
+- lease tests cover live, `EPERM`/live, stale/`ESRCH`, PID-present,
+  malformed/partial, symlink, and token-mismatch records, and force never
+  bypasses live or malformed state;
+- negative traversal, symlinked parent/final, parent swaps, source hardlinks,
+  and source/final identity checks cover lock, temp, no-force, absent-final force,
+  unsupported expected-present force, and cleanup; and
+- split-directory tests stage all children and publish once, inject final-root
+  creation and failures before/during stage verification/publication, exercise an
+  indeterminate result without retry, and prove no unknown recursive deletion
+  with either no final root or a clearly committed root.
 
 Run:
 
 ```bash
+npm ci
 npm run build
 npm run test:reader
-npm run test:cli -- --run tests/cli/destinationLifecycle.test.ts tests/cli/freshSplitRoot.test.ts tests/cli/pathSafety.test.ts
+npm run test:cli -- --run tests/cli/nativeCapability.test.ts tests/cli/destinationLifecycle.test.ts tests/cli/freshSplitRoot.test.ts tests/cli/pathSafety.test.ts tests/cli/secureDestinationRace.test.ts
 npm run package:check
 ```
 
 Run `secureDestinationRace.test.ts` only when the capability manifest reports
 supported; on an unsupported host, run the explicit unsupported-host test instead.
+The supported branch is mandatory whenever support is truthfully reported; the
+unsupported branch must prove no stale module and exit 6 before the reader.
+The capability test must exercise both branches: support requires a
+hash-matching module that loads on the running Node 22+ ABI and passes all
+primitive probes; unsupported requires no stale module and exit 6 before the
+reader boundary.
 
 **Stop condition:** any modern file path uses a JavaScript/path-based fallback,
 any split root is adopted, any concurrent process can clobber without authorized
@@ -481,6 +582,65 @@ to make the named gate execute them, then rerun the full gate.
 **Stop condition:** process smoke cannot distinguish stdout data from stderr
 Diagnostics, SIGINT leaves a temporary/lock artifact, or a supported-host
 publication race is unproven.
+
+## Task 2.6 — Archive superseded Phase 2 plan packages after implementation approval
+
+**Depends on:** Tasks 2.1–2.5, the exact Phase 2 gate, the full-suite result,
+and explicit implementation approval. This is a post-approval administrative
+task, not an implementation or test step; do not archive either package while
+Phase 2 work is still being reviewed or revised.
+
+After approval, move both active Phase 2 plan directories as complete directories
+under `docs/archive/`, preserving their directory names:
+
+- `docs/cdb-to-json-cli-refactor-phase-2-remediation/` →
+  `docs/archive/cdb-to-json-cli-refactor-phase-2-remediation/`;
+- `docs/cdb-to-json-cli-refactor-phase-2-publication/` →
+  `docs/archive/cdb-to-json-cli-refactor-phase-2-publication/`.
+
+Use `git mv` (not a copy/delete), retain every file in each package, and update
+only any active links that would otherwise point at the old paths. Do not move,
+rename, or rewrite the normative source documents that the packages cite:
+`docs/cdb-to-json-cli-refactor-spec.md`,
+`docs/cdb-to-json-cli-refactor/spec.md`,
+`docs/cdb-to-json-cli-refactor/senior-remediation-spec.md`,
+`docs/cdb-to-json-cli-refactor/limits-and-diagnostics.md`, and
+`docs/cdb-to-json-cli-refactor/phase-2-cli-raw-output.md`.
+
+**Archive checklist:**
+
+- [ ] Implementation approval is recorded before any move is made.
+- [ ] Both source directories exist and the two archive destinations do not
+      already exist.
+- [ ] Both directories are moved with `git mv`, with no files omitted.
+- [ ] No normative source document listed above was changed or moved.
+- [ ] Active documentation no longer links to the removed pre-archive paths;
+      historical links inside the archived package may be retained or adjusted
+      only to point at the archived location.
+
+**Verification (run after the approved move):**
+
+```bash
+set -euo pipefail
+for name in \
+  cdb-to-json-cli-refactor-phase-2-remediation \
+  cdb-to-json-cli-refactor-phase-2-publication; do
+  test ! -e "docs/$name"
+  test -d "docs/archive/$name"
+  test -n "$(find "docs/archive/$name" -type f -print -quit)"
+done
+for file in \
+  docs/cdb-to-json-cli-refactor-spec.md \
+  docs/cdb-to-json-cli-refactor/spec.md \
+  docs/cdb-to-json-cli-refactor/senior-remediation-spec.md \
+  docs/cdb-to-json-cli-refactor/limits-and-diagnostics.md \
+  docs/cdb-to-json-cli-refactor/phase-2-cli-raw-output.md; do
+  test -f "$file"
+done
+find docs/archive/cdb-to-json-cli-refactor-phase-2-remediation \
+     docs/archive/cdb-to-json-cli-refactor-phase-2-publication \
+     -type f -print | sort
+```
 
 ## Final rollback checklist
 

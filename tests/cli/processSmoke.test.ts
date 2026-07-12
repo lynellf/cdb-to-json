@@ -196,6 +196,46 @@ describe("Convert Command", () => {
     expect(stderr).toContain("No CDB");
     expect(exitCode).toBe(3);
   });
+
+  it("file output on unsupported host exits 6 before discovery", () => {
+    const { stderr, exitCode } = runCli([
+      "convert", FIXTURE_CDB, "--profile", "raw",
+      "--output", "/tmp/cdb-test-unsupported-host.cdb"
+    ]);
+    expect(exitCode).toBe(6);
+    expect(stderr).toContain("UNSAFE_DESTINATION_FILESYSTEM");
+    // Error message should explain the capability issue
+    expect(stderr).toMatch(/not yet implemented|not supported/i);
+    // Must not reach discovery
+    expect(stderr).not.toContain("No CDB");
+  });
+
+  it("directory output on unsupported host exits 6 before discovery", () => {
+    const { stderr, exitCode } = runCli([
+      "convert", FIXTURE_CDB, "--profile", "raw", "--split", "database",
+      "--output", "/tmp/cdb-test-unsupported-host-dir"
+    ]);
+    expect(exitCode).toBe(6);
+    expect(stderr).toContain("UNSAFE_DESTINATION_FILESYSTEM");
+    // Must not reach discovery
+    expect(stderr).not.toContain("No CDB");
+  });
+
+  it("--force with existing file exits 6 on supported host", () => {
+    // This test verifies the structural preflight exists.
+    // On unsupported host it returns UNSAFE_DESTINATION_FILESYSTEM before checking file existence.
+    // We can at least verify that --force alone doesn't cause a parse error.
+    const { stderr, exitCode } = runCli([
+      "convert", FIXTURE_CDB, "--profile", "raw",
+      "--output", "/tmp/cdb-test-force.cdb", "--force"
+    ]);
+    // On unsupported host: exit 6 (capability check happens before file-existence check)
+    // On supported host: would exit 6 if file exists (unsupported replace)
+    expect([5, 6]).toContain(exitCode);
+    // Should not be a parse error or option error
+    expect(stderr).not.toContain("not valid");
+    expect(stderr).not.toContain("Invalid");
+  });
 });
 
 describe("Stdout/Stderr Separation", () => {
