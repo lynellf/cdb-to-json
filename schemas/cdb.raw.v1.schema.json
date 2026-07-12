@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cdb.raw/1",
+  "title": "CDB Raw Profile",
+  "description": "Lossless extraction of CDB database tables as raw JSON.",
+  "type": "object",
+  "required": ["schema", "source", "tables"],
+  "properties": {
+    "schema": {
+      "const": "cdb.raw/1",
+      "description": "Schema identifier"
+    },
+    "integerEncoding": {
+      "const": "signed-int64-decimal",
+      "description": "Encoding scheme for integer values"
+    },
+    "source": {
+      "type": "object",
+      "required": ["fileName", "sha256", "sizeBytes", "converter"],
+      "properties": {
+        "fileName": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "converter": { "const": "cdb-to-json/2.0.0" }
+      }
+    },
+    "tables": {
+      "type": "object",
+      "required": ["datas", "texts"],
+      "properties": {
+        "datas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "ot", "alias", "setcode", "type", "atk", "def", "level", "race", "attribute", "category"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "ot": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "alias": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "setcode": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "type": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "atk": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "def": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "level": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "race": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "attribute": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "category": { "type": "string", "pattern": "^-?[0-9]+$" }
+            }
+          }
+        },
+        "texts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "desc", "str1", "str2", "str3", "str4", "str5", "str6", "str7", "str8", "str9", "str10", "str11", "str12", "str13", "str14", "str15", "str16"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "name": { "type": ["string", "null"] },
+              "desc": { "type": ["string", "null"] },
+              "str1": { "type": ["string", "null"] },
+              "str2": { "type": ["string", "null"] },
+              "str3": { "type": ["string", "null"] },
+              "str4": { "type": ["string", "null"] },
+              "str5": { "type": ["string", "null"] },
+              "str6": { "type": ["string", "null"] },
+              "str7": { "type": ["string", "null"] },
+              "str8": { "type": ["string", "null"] },
+              "str9": { "type": ["string", "null"] },
+              "str10": { "type": ["string", "null"] },
+              "str11": { "type": ["string", "null"] },
+              "str12": { "type": ["string", "null"] },
+              "str13": { "type": ["string", "null"] },
+              "str14": { "type": ["string", "null"] },
+              "str15": { "type": ["string", "null"] },
+              "str16": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cdb.card-array/2",
+  "title": "CDB Card Profile Array",
+  "description": "Array of consumer-friendly card records from CDB databases.",
+  "type": "object",
+  "required": ["schema", "cards"],
+  "properties": {
+    "schema": { "const": "cdb.card-array/2" },
+    "cards": {
+      "type": "array",
+      "items": { "$ref": "cdb.card/2" }
+    }
+  }
+}

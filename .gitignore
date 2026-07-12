@@ -106,3 +106,8 @@ typings/
 input/
 output/
 **tests**/secrets.json
+
+# Generated build and agent artifacts
+dist/
+.pi-conductor/
+.DS_Store

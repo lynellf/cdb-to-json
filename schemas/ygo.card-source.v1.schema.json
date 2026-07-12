@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ygo.card-source/1",
+  "title": "YGO Card Source Profile",
+  "description": "Provenance-rich source document for the YGO-DSL translation pipeline.",
+  "type": "object",
+  "required": ["schema", "sourceRevisionId", "identity", "locale", "printed", "text", "simulatorSource", "references", "coverage", "provenance", "diagnostics"],
+  "properties": {
+    "schema": { "const": "ygo.card-source/1" },
+    "sourceRevisionId": { "type": "string" },
+    "identity": { "type": "object" },
+    "locale": { "type": "string" },
+    "printed": { "type": "object" },
+    "text": { "type": "object" },
+    "simulatorSource": { "type": "object" },
+    "references": { "type": "object" },
+    "coverage": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "SOURCE_ONLY" }
+      }
+    },
+    "provenance": { "type": "object" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}

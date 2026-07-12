@@ -1,19 +1,69 @@
 {
   "name": "cdb-to-json",
-  "version": "1.0.5",
-  "description": "Convert Sqlite Files to JSON",
-  "main": "app/index.js",
+  "version": "2.0.0",
+  "description": "CLI-first Yu-Gi-Oh! Card Ingestion Tool",
   "type": "module",
-  "scripts": {
-    "test": "node __tests__/main.test.js"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "cdb-to-json": "./dist/cli.js"
   },
-  "keywords": [],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./legacy": {
+      "types": "./dist/legacy.d.ts",
+      "import": "./dist/legacy.js"
+    }
+  },
+  "scripts": {
+    "build:native": "node scripts/build-native.mjs",
+    "build": "npm run build:native && tsc -p tsconfig.json",
+    "test:fixtures": "vitest run tests/fixtures",
+    "test:unit": "vitest run tests/unit",
+    "test:reader": "vitest run tests/reader",
+    "test:compat": "vitest run tests/compatibility",
+    "test:cli": "vitest run tests/cli",
+    "test:api": "vitest run tests/api",
+    "test:normalization": "vitest run tests/normalization --passWithNoTests",
+    "test:source": "vitest run tests/source --passWithNoTests",
+    "test:streaming": "vitest run tests/streaming --passWithNoTests",
+    "test:conformance": "vitest run tests/conformance",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "package:check": "node scripts/package-check.mjs",
+    "prepublishOnly": "npm run build && npm test && npm run package:check"
+  },
+  "keywords": [
+    "yugioh",
+    "ygo",
+    "cdb",
+    "sqlite",
+    "json",
+    "cli"
+  ],
   "author": "Ezell Frazier",
   "license": "ISC",
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.12"
+    "@types/better-sqlite3": "7.6.12",
+    "@types/node": "^22.0.0",
+    "node-gyp": "11.2.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
   },
   "dependencies": {
-    "better-sqlite3": "11.8.1"
-  }
+    "better-sqlite3": "^12.11.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "README.md",
+    "LICENSE"
+  ]
 }
