@@ -255,6 +255,106 @@ export async function convert(
           // ENOENT/ENOTDIR: path does not exist, proceed
         }
       }
+
+      // For directory destination: check that the output root does not already exist.
+      // A fresh split root is required; existing directories fail before discovery.
+      // --force does not override this check (per spec).
+      if (options.destination.kind === "directory" && options.destination.path) {
+        const { lstat } = await import("node:fs/promises");
+        try {
+          const stat = await lstat(options.destination.path);
+          if (stat.isDirectory()) {
+            topCollector.error(
+              DiagnosticCode.OUTPUT_DIRECTORY_EXISTS,
+              `Output directory already exists. Use a non-existing path for split=database output.`,
+              { details: { existingPath: options.destination.path } }
+            );
+            const summary = topCollector.getSummary();
+            return {
+              sources: [],
+              cardCount: 0,
+              warningCount: summary.warningCount,
+              errorCount: summary.errorCount,
+              exitCodeState: {
+                optionError: false,
+                hasUsableInput: false,
+                inputError: false,
+                strictFailure: false,
+                resourceOrIntegerFailure: false,
+                mergeCollision: false,
+                outputError: true,
+                cancelled: false,
+                continued: false,
+                completedInputCount: 0,
+                failedInputCount: 0,
+                internalError: false,
+              },
+              state: "ABORTED",
+            };
+          }
+          // Non-directory existing path at the output location: fail with UNSAFE
+          if (stat.isFile() || stat.isSymbolicLink()) {
+            topCollector.error(
+              DiagnosticCode.OUTPUT_DIRECTORY_EXISTS,
+              `Output path exists but is not a directory. Use a non-existing directory path for split=database output.`,
+              { details: { existingPath: options.destination.path } }
+            );
+            const summary = topCollector.getSummary();
+            return {
+              sources: [],
+              cardCount: 0,
+              warningCount: summary.warningCount,
+              errorCount: summary.errorCount,
+              exitCodeState: {
+                optionError: false,
+                hasUsableInput: false,
+                inputError: false,
+                strictFailure: false,
+                resourceOrIntegerFailure: false,
+                mergeCollision: false,
+                outputError: true,
+                cancelled: false,
+                continued: false,
+                completedInputCount: 0,
+                failedInputCount: 0,
+                internalError: false,
+              },
+              state: "ABORTED",
+            };
+          }
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ENOTDIR") {
+            topCollector.error(
+              DiagnosticCode.OUTPUT_WRITE_FAILED,
+              `Failed to check output directory: ${err instanceof Error ? err.message : String(err)}`
+            );
+            const summary = topCollector.getSummary();
+            return {
+              sources: [],
+              cardCount: 0,
+              warningCount: summary.warningCount,
+              errorCount: summary.errorCount,
+              exitCodeState: {
+                optionError: false,
+                hasUsableInput: false,
+                inputError: false,
+                strictFailure: false,
+                resourceOrIntegerFailure: false,
+                mergeCollision: false,
+                outputError: true,
+                cancelled: false,
+                continued: false,
+                completedInputCount: 0,
+                failedInputCount: 0,
+                internalError: false,
+              },
+              state: "ABORTED",
+            };
+          }
+          // ENOENT/ENOTDIR: path does not exist, proceed
+        }
+      }
     }
 
     // Validate limit relations
@@ -362,6 +462,10 @@ export async function convert(
       let dbCardCount = 0;
       let dbSourceSize = 0;
       let dbExtraTables: ExtraTableMetadata[] = [];
+      // Track whether we obtained verified provenance metadata.
+      // If false (reader error, preflight failure), we must NOT emit a
+      // fabricated envelope with empty sha256/sizeBytes.
+      let metadataObtained = false;
 
       // Build the raw envelope for this database
       const envelopeBuilder = new RawEnvelopeBuilder({
@@ -372,7 +476,6 @@ export async function convert(
       });
 
       try {
-        // Read rows via the async iterator, collecting metadata via callback
         // Read rows via the async iterator, collecting metadata via callback.
         // The callback fires once after preflight checks, before row iteration.
         for await (const cardRow of iterateRawCards(input.path, {
@@ -383,6 +486,7 @@ export async function convert(
             dbSha256 = meta.bundleHash;
             dbSourceSize = meta.sourceSizeBytes;
             dbExtraTables = [...meta.extraTables];
+            metadataObtained = true;
           },
         })) {
           envelopeBuilder.addCard(cardRow);
@@ -408,6 +512,42 @@ export async function convert(
         }
         failedInputCount++;
         topCollector.merge(dbCollector);
+        // Do NOT build/emit an envelope after a reader error.
+        // A fabricated envelope with empty sha256/sizeBytes would violate the
+        // provenance contract and produce schema-invalid output.
+        renderDbDiagnostics(dbCollector, options.diagnosticsMode, writers.diagnostics);
+        sourceReports.push({
+          path: input.path,
+          fileName: input.name,
+          fileSizeBytes: input.sizeBytes,
+          sha256: "",
+          cardCount: 0,
+          diagnostics: dbCollector.getSummary(),
+        });
+        if (!options.continueOnError) break;
+        continue;
+      }
+
+      // Build the raw envelope only when verified provenance was obtained.
+      // If metadataObtained is false (should not happen with current iterator
+      // but is a defensive guard), skip emission.
+      if (!metadataObtained) {
+        dbCollector.error(
+          DiagnosticCode.CDB_OPEN_FAILED,
+          "No provenance metadata obtained; envelope not emitted",
+          { details: { database: input.path } }
+        );
+        failedInputCount++;
+        topCollector.merge(dbCollector);
+        renderDbDiagnostics(dbCollector, options.diagnosticsMode, writers.diagnostics);
+        sourceReports.push({
+          path: input.path,
+          fileName: input.name,
+          fileSizeBytes: input.sizeBytes,
+          sha256: "",
+          cardCount: 0,
+          diagnostics: dbCollector.getSummary(),
+        });
         if (!options.continueOnError) break;
         continue;
       }

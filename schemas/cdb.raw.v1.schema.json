@@ -4,7 +4,7 @@
   "title": "CDB Raw Profile",
   "description": "Lossless extraction of CDB database tables as raw JSON.",
   "type": "object",
-  "required": ["schema", "integerEncoding", "source", "tables"],
+  "required": ["schema", "integerEncoding", "source", "tables", "extraTables"],
   "properties": {
     "schema": {
       "const": "cdb.raw/1",

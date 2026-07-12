@@ -36,8 +36,10 @@ export interface SnapshotBundle {
   shmPath: string | null;
   /** Canonical SHA-256 hash of the bundle */
   bundleHash: string;
-  /** Total bytes of all present members */
+  /** Total bytes of all present members (main + WAL + SHM) */
   totalBytes: number;
+  /** Size of the original main source file in bytes */
+  mainFileSize: number;
 }
 
 const MAX_RETRIES = 3;
@@ -217,6 +219,12 @@ export async function acquireSnapshotBundle(
     const canonicalJson = JSON.stringify(bundleMembers);
     const bundleHash = createHash("sha256").update(canonicalJson, "utf-8").digest("hex");
 
+    // Capture the original main file size separately from the bundle total.
+    // This preserves the provenance contract: sha256 covers the bundle
+    // (main+WAL+SHM) while sizeBytes always reflects the original .cdb.
+    const mainMember = members.find((m) => m.name === "main");
+    const mainFileSize = mainMember?.size ?? 0;
+
     return {
       stagingDir,
       mainPath,
@@ -224,6 +232,7 @@ export async function acquireSnapshotBundle(
       shmPath,
       bundleHash,
       totalBytes,
+      mainFileSize,
     };
   }
 

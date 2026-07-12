@@ -37,7 +37,7 @@ export interface RawDatabaseEnvelope {
     datas: RawDatasRow[];
     texts: RawTextsRow[];
   };
-  extraTables?: RawExtraTable[];
+  extraTables: RawExtraTable[];
 }
 
 /**
@@ -93,7 +93,9 @@ export class RawEnvelopeBuilder {
    * Resets internal accumulators.
    */
   build(): RawDatabaseEnvelope {
-    const extraTables = this.sourceMeta.extraTables?.map((t) => ({
+    // Always emit extraTables as an array (fixed raw envelope contract).
+    // Empty array is emitted when there are no extra tables.
+    const extraTables: RawExtraTable[] = (this.sourceMeta.extraTables ?? []).map((t) => ({
       name: t.name,
       columns: [...t.columns],
       rowCount: t.rowCount,
@@ -112,7 +114,7 @@ export class RawEnvelopeBuilder {
         datas: [...this.datasRows],
         texts: [...this.textsRows],
       },
-      ...(extraTables && extraTables.length > 0 ? { extraTables } : {}),
+      extraTables,
     };
 
     // Clear accumulators after building

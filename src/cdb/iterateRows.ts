@@ -187,6 +187,8 @@ export async function* iterateRawCards(
     checkAborted(signal);
 
     // Phase 4d: Collect extra-table metadata
+    // Uses SQLite identifier quoting (double quotes with embedded quotes doubled)
+    // to safely handle arbitrary table and column names.
     const extraTables: ExtraTableMetadata[] = [];
     try {
       const tableInfos = db
@@ -195,31 +197,41 @@ export async function* iterateRawCards(
         )
         .all() as { name: string }[];
       for (const { name } of tableInfos) {
+        // Quote a SQLite identifier by doubling embedded double-quote characters.
+        const quotedName = `"${name.replace(/"/g, '""')}"`;
         try {
           const cols = db
-            .prepare(`PRAGMA table_info("${name}")`)
+            .prepare(`PRAGMA table_info(${quotedName})`)
             .all() as { name: string }[];
           const countResult = db
-            .prepare(`SELECT COUNT(*) AS cnt FROM "${name}"`)
+            .prepare(`SELECT COUNT(*) AS cnt FROM ${quotedName}`)
             .get() as { cnt: number };
           extraTables.push({
             name,
             columns: cols.map((c) => c.name),
             rowCount: countResult.cnt,
           });
-        } catch {
-          // Skip tables that cannot be queried
+        } catch (err) {
+          // Table became inaccessible (e.g., dropped concurrently);
+          // report it as a diagnostic rather than silently skipping.
+          diagnostics?.warning(
+            DiagnosticCode.INVALID_PATH,
+            `Could not read extra table "${name}": ${err instanceof Error ? err.message : String(err)}`,
+            { source: { database: databasePath } }
+          );
         }
       }
     } catch {
-      // No extra tables
+      // No extra tables or query failed entirely
     }
 
-    // Emit metadata via callback before row iteration
+    // Emit metadata via callback before row iteration.
+    // sourceSizeBytes is the original main .cdb file size (provenance contract).
+    // bundleHash covers the full bundle including WAL/SHM.
     if (onMetadata) {
       onMetadata({
         bundleHash: `sha256:${snapshotBundle!.bundleHash}`,
-        sourceSizeBytes: snapshotBundle!.totalBytes,
+        sourceSizeBytes: snapshotBundle!.mainFileSize,
         extraTables,
       });
     }
