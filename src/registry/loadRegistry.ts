@@ -15,6 +15,11 @@ import type { RegistryPin, RegistryData, RegistryLoadResult } from "./types.js";
  * Only loads from the descriptor's path after verifying its SHA-256
  * matches the expected pin. Unsafe paths or mismatched hashes are rejected.
  *
+ * Security notes:
+ * - Hashes exact file bytes (not UTF-8 decoded text) for content-addressed verification
+ * - Requires absolute paths to prevent traversal attacks
+ * - Rejects paths containing ".." for traversal protection
+ *
  * @param pin - Registry pin with path and expected hash
  * @returns Load result with verified data or error
  */
@@ -39,9 +44,11 @@ export async function loadRegistry(
     };
   }
 
-  let content: string;
+  let rawBytes: Buffer;
   try {
-    content = await readFile(path, "utf-8");
+    // Read exact bytes for content-addressed verification
+    // Use null encoding to get raw bytes, not UTF-8 text
+    rawBytes = await readFile(path);
   } catch (err) {
     return {
       success: false,
@@ -49,12 +56,24 @@ export async function loadRegistry(
     };
   }
 
-  // Verify content hash
-  const actualHash = createHash("sha256").update(content, "utf-8").digest("hex");
+  // Verify content hash using exact bytes (not UTF-8 decoded text)
+  // This ensures content-addressed semantics are preserved
+  const actualHash = createHash("sha256").update(rawBytes).digest("hex");
   if (actualHash !== expectedHash) {
     return {
       success: false,
       error: `Registry hash mismatch for ${path}: expected ${expectedHash}, got ${actualHash}`,
+    };
+  }
+
+  // Decode UTF-8 only after hash verification
+  let content: string;
+  try {
+    content = rawBytes.toString("utf-8");
+  } catch (err) {
+    return {
+      success: false,
+      error: `Failed to decode registry as UTF-8: ${path}`,
     };
   }
 
@@ -112,14 +131,31 @@ export function parseRegistryDescriptor(descriptor: string): RegistryPin | null 
 }
 
 /**
- * Built-in registry version and hash for the default bundled registry.
- * This is the content-addressed identity of the registry embedded in the package.
+ * Bundled registry path resolution.
+ * Resolves the bundled registry to an absolute path within the package.
+ * Returns null if the bundled registry is not available.
+ *
+ * NOTE: This function is a placeholder. When actual bundled registry content
+ * is provided in the package, this should return the absolute path to it.
  */
-export const BUNDLED_REGISTRY_PIN: RegistryPin = {
-  path: "@cdb-to-json/bundled-registry",
-  version: "2024.01.01",
-  sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-};
+export function resolveBundledRegistryPath(): string | null {
+  // Bundled registry is not yet implemented.
+  // Until bundled content is provided, use external registry overrides.
+  return null;
+}
+
+/**
+ * Built-in registry pin for the default bundled registry.
+ * 
+ * NOTE: This is a placeholder. The actual bundled registry content must be
+ * provided in the package and its hash computed from the exact bytes.
+ * 
+ * Until actual bundled content is provided, use external registry overrides
+ * with pinned descriptors for registry loading.
+ *
+ * Format: absolute path to bundled registry file
+ */
+export const BUNDLED_REGISTRY_PIN: RegistryPin | null = null; // Disabled until actual bundled content is provided
 
 /**
  * Validate that a registry descriptor is safe to load.

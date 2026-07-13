@@ -13,61 +13,256 @@ describe("parseCliArgs", () => {
   describe("command detection", () => {
     it("detects convert command", () => {
       const result = parseCliArgs(["convert", "input.cdb"]);
-      expect(result.command).toBe("convert");
-      expect(result.inputs).toEqual(["input.cdb"]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("convert");
+        expect(result.inputs).toEqual(["input.cdb"]);
+      }
     });
 
     it("detects convert as default", () => {
       const result = parseCliArgs(["input.cdb"]);
-      expect(result.command).toBe("convert");
-      expect(result.inputs).toEqual(["input.cdb"]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("convert");
+        expect(result.inputs).toEqual(["input.cdb"]);
+      }
     });
 
     it("detects inspect command", () => {
       const result = parseCliArgs(["inspect", "input.cdb"]);
-      expect(result.command).toBe("inspect");
-      expect(result.inputs).toEqual(["input.cdb"]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("inspect");
+        expect(result.inputs).toEqual(["input.cdb"]);
+      }
     });
 
     it("detects validate command", () => {
       const result = parseCliArgs(["validate", "input.cdb"]);
-      expect(result.command).toBe("validate");
-      expect(result.inputs).toEqual(["input.cdb"]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("validate");
+        expect(result.inputs).toEqual(["input.cdb"]);
+      }
     });
 
     it("detects schema command", () => {
       const result = parseCliArgs(["schema"]);
-      expect(result.command).toBe("schema");
-      expect(result.inputs).toEqual([]);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("schema");
+        expect(result.inputs).toEqual([]);
+      }
     });
 
     it("detects --version", () => {
       const result = parseCliArgs(["--version"]);
-      expect(result.command).toBe("version");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("version");
+      }
     });
 
     it("detects --help", () => {
       const result = parseCliArgs(["--help"]);
-      expect(result.command).toBe("help");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("help");
+      }
     });
 
     it("empty args returns help", () => {
       const result = parseCliArgs([]);
-      expect(result.command).toBe("help");
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.command).toBe("help");
+      }
     });
   });
 
   describe("unknown options with strict mode", () => {
-    it("returns help on unknown option", () => {
+    it("returns usage error on unknown option", () => {
       const result = parseCliArgs(["--unknown-option", "input.cdb"]);
-      expect(result.command).toBe("help");
-      expect(result.options.__parseError).toBeDefined();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.usageError).toBeDefined();
+      }
     });
 
-    it("returns help on unknown short option", () => {
+    it("returns usage error on unknown short option", () => {
       const result = parseCliArgs(["-x", "input.cdb"]);
-      expect(result.command).toBe("help");
-      expect(result.options.__parseError).toBeDefined();
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.usageError).toBeDefined();
+      }
+    });
+  });
+
+  describe("duplicate options", () => {
+    it("rejects duplicate scalar --max-rows", () => {
+      const result = parseCliArgs([
+        "--max-rows=1000",
+        "--max-rows=2000",
+        "input.cdb"
+      ]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.usageError).toContain("Duplicate");
+        expect(result.usageError).toContain("max-rows");
+      }
+    });
+
+    it("rejects duplicate --profile", () => {
+      const result = parseCliArgs([
+        "--profile=card",
+        "--profile=raw",
+        "input.cdb"
+      ]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.usageError).toContain("Duplicate");
+        expect(result.usageError).toContain("profile");
+      }
+    });
+
+    it("allows repeated --exclude (explicitly multiple)", () => {
+      const result = parseCliArgs([
+        "--exclude=*.tmp",
+        "--exclude=*.log",
+        "input.cdb"
+      ]);
+      // exclude is marked as multiple: true, so duplicates are allowed
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.options.exclude).toEqual(["*.tmp", "*.log"]);
+      }
+    });
+  });
+
+  describe("canonical numeric parsing", () => {
+    it("accepts canonical integer 0", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "0",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(true);
+    });
+
+    it("accepts canonical integer 12345", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "12345",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects non-canonical +12", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "+12",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("not a valid non-negative integer");
+    });
+
+    it("rejects non-canonical 1.2", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "1.2",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("not a valid non-negative integer");
+    });
+
+    it("rejects trailing junk 12junk", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "12junk",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("not a valid non-negative integer");
+    });
+
+    it("rejects negative -5", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "-5",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("not a valid non-negative integer");
+    });
+
+    it("rejects leading zero 01", () => {
+      const parsed: CliArgs = {
+        command: "convert",
+        inputs: ["input.cdb"],
+        options: {
+          profile: "raw",
+          format: "json",
+          split: "none",
+          "on-conflict": "error",
+          diagnostics: "text",
+          "max-rows": "01",
+        },
+      };
+      const result = compileNormalizedOptions(parsed);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("not a valid non-negative integer");
     });
   });
 

@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   loadRegistry,
   parseRegistryDescriptor,
@@ -109,9 +110,12 @@ describe("Registry Loader", () => {
         meta: { description: "Test registry" },
         data: { test: "value" },
       });
-      const hash = createHash("sha256").update(registryContent, "utf-8").digest("hex");
       const filePath = join(testDir, "test-registry.json");
       await writeFile(filePath, registryContent);
+
+      // Hash exact bytes (same as loader does)
+      const fileBytes = readFileSync(filePath);
+      const hash = createHash("sha256").update(fileBytes).digest("hex");
 
       const pin = {
         path: filePath,
@@ -151,9 +155,12 @@ describe("Registry Loader", () => {
         version: "2.0.0",
         data: { test: "value" },
       });
-      const hash = createHash("sha256").update(registryContent, "utf-8").digest("hex");
       const filePath = join(testDir, "version-mismatch.json");
       await writeFile(filePath, registryContent);
+
+      // Hash exact bytes
+      const fileBytes = readFileSync(filePath);
+      const hash = createHash("sha256").update(fileBytes).digest("hex");
 
       const pin = {
         path: filePath,
@@ -184,7 +191,9 @@ describe("Registry Loader", () => {
       const filePath = join(testDir, "invalid-json.json");
       await writeFile(filePath, "not valid json {{{");
 
-      const hash = createHash("sha256").update("not valid json {{{", "utf-8").digest("hex");
+      // Hash exact bytes
+      const fileBytes = readFileSync(filePath);
+      const hash = createHash("sha256").update(fileBytes).digest("hex");
       const pin = {
         path: filePath,
         version: "1.0.0",
@@ -225,12 +234,10 @@ describe("Registry Loader", () => {
   });
 
   describe("BUNDLED_REGISTRY_PIN", () => {
-    it("has expected structure", () => {
-      expect(BUNDLED_REGISTRY_PIN).toBeDefined();
-      expect(BUNDLED_REGISTRY_PIN.path).toBeDefined();
-      expect(BUNDLED_REGISTRY_PIN.version).toBeDefined();
-      expect(BUNDLED_REGISTRY_PIN.sha256).toBeDefined();
-      expect(BUNDLED_REGISTRY_PIN.sha256).toHaveLength(64);
+    it("is null until actual bundled content is provided", () => {
+      // BUNDLED_REGISTRY_PIN is null until actual bundled registry content is provided
+      // This ensures the security contract is maintained (no placeholder content)
+      expect(BUNDLED_REGISTRY_PIN).toBeNull();
     });
   });
 });

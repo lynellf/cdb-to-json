@@ -29,8 +29,14 @@ export async function main(
     stderr: process.stderr,
   }
 ): Promise<number> {
-  // Parse CLI arguments
+  // Parse CLI arguments using the discriminated ParseResult
   const parsed = parseCliArgs(args);
+
+  // Handle usage errors: render to stderr, exit 2
+  if (!parsed.ok) {
+    streams.stderr.write(`Error: ${parsed.usageError}\n`);
+    return 2;
+  }
 
   // Handle help and version commands
   if (parsed.command === "help") {
@@ -43,9 +49,8 @@ export async function main(
     return 0;
   }
 
-  // If we ended up with convert but no recognized command word was given
-  // AND the first argument looks like a command name (not a file path),
-  // reject it as an unknown command.
+  // Validate bare-convert input: first positional should look like a path
+  // This catches unknown commands masquerading as inputs
   if (parsed.command === "convert" && parsed.inputs.length > 0) {
     const firstInput = parsed.inputs[0];
     // If the first input doesn't look like a path (no extension, no slash),
@@ -64,7 +69,7 @@ export async function main(
     }
   }
 
-  // Command routing
+  // Command routing (only reached for ok: true results)
   switch (parsed.command) {
     case "convert": {
       // Compile normalized options from parsed args
@@ -97,7 +102,7 @@ export async function main(
     }
 
     case "inspect": {
-      const result = await executeInspect(parsed.inputs, {
+      const result = await executeInspect(parsed.inputs as string[], {
         recursive: !!parsed.options.recursive,
         exclude: (parsed.options.exclude as string[]) || [],
         followSymlinks: !!parsed.options["follow-symlinks"],
@@ -108,7 +113,7 @@ export async function main(
     }
 
     case "validate": {
-      const result = await executeValidate(parsed.inputs, {
+      const result = await executeValidate(parsed.inputs as string[], {
         strict: !!parsed.options.strict,
         recursive: !!parsed.options.recursive,
         exclude: (parsed.options.exclude as string[]) || [],
@@ -118,19 +123,12 @@ export async function main(
     }
 
     case "schema": {
-      const profile = parsed.inputs[0] || "";
+      const profile = (parsed.inputs as string[])[0] || "";
       const result = await executeSchema(profile, {
         output: parsed.options.output as string | undefined,
       }, streams);
       return result.exitCode;
     }
-
-    default:
-      // Unknown command
-      streams.stderr.write(
-        `Error: Unknown command '${parsed.command}'. Use 'help' for usage.\n`
-      );
-      return 2;
   }
 }
 

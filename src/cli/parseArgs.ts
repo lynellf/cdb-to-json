@@ -26,7 +26,20 @@ import {
 import { validateRegistryDescriptor } from "../registry/loadRegistry.js";
 
 /**
- * Parsed CLI arguments.
+ * Discriminated union for parse results.
+ * Success: valid parse with command and options
+ * UsageError: structured usage failure with error message
+ * Help/Version: explicit help or version requests
+ */
+export type ParseResult =
+  | { ok: true; command: "convert" | "inspect" | "validate" | "schema"; inputs: string[]; options: Record<string, unknown> }
+  | { ok: true; command: "help" }
+  | { ok: true; command: "version" }
+  | { ok: false; usageError: string };
+
+/**
+ * Legacy parsed CLI arguments (for backward compatibility).
+ * @deprecated Use ParseResult instead.
  */
 export interface CliArgs {
   command: "convert" | "inspect" | "validate" | "schema" | "help" | "version";
@@ -126,11 +139,92 @@ function detectCommand(
 }
 
 /**
- * Parse CLI arguments.
- * Uses strict node:util.parseArgs where possible.
+ * Canonical decimal integer grammar.
+ * Accepts: 0, 1, 2, ..., 123, 999, etc.
+ * Rejects: +1, -1, 1.2, 12junk, 01, "", etc.
  */
-export function parseCliArgs(args: string[]): CliArgs {
+const CANONICAL_INTEGER_REGEX = /^(0|[1-9][0-9]*)$/;
+
+/**
+ * Track option occurrences for duplicate detection.
+ */
+function trackOptionOccurrences(
+  args: string[],
+  optionDefs: Record<string, unknown>
+): { valid: boolean; duplicates?: string[] } {
+  const occurrences: Record<string, number> = {};
+  const duplicateNonRepeatable: string[] = [];
+
+  // Non-repeatable option types (not multiple)
+  const nonRepeatable = new Set<string>();
+  for (const [name, def] of Object.entries(optionDefs)) {
+    const defObj = def as { multiple?: boolean };
+    if (!defObj.multiple) {
+      nonRepeatable.add(name);
+    }
+  }
+
+  // Count occurrences by walking args manually
+  // This is a simplified approach - we track key occurrences
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith("--")) {
+      // Handle --option=value and --option value
+      const eqIndex = arg.indexOf("=");
+      if (eqIndex !== -1) {
+        const optName = arg.slice(2, eqIndex);
+        occurrences[optName] = (occurrences[optName] || 0) + 1;
+      } else {
+        const optName = arg.slice(2);
+        occurrences[optName] = (occurrences[optName] || 0) + 1;
+        // Check if next arg is a value (not an option)
+        if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+          // This is handled by parseArgs, but we count the option
+        }
+      }
+    } else if (arg.startsWith("-") && arg.length > 2) {
+      // Short option - check for duplicates
+      const shortName = arg.slice(1, 2);
+      // Map short to long name
+      for (const [name, def] of Object.entries(optionDefs)) {
+        const defObj = def as { short?: string };
+        if (defObj.short === shortName) {
+          occurrences[name] = (occurrences[name] || 0) + 1;
+          break;
+        }
+      }
+    }
+  }
+
+  // Check for duplicates in non-repeatable options
+  for (const [name, count] of Object.entries(occurrences)) {
+    if (count > 1 && nonRepeatable.has(name)) {
+      duplicateNonRepeatable.push(name);
+    }
+  }
+
+  if (duplicateNonRepeatable.length > 0) {
+    return { valid: false, duplicates: duplicateNonRepeatable };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Parse CLI arguments.
+ * Uses strict node:util.parseArgs with duplicate detection.
+ * Returns a discriminated ParseResult.
+ */
+export function parseCliArgs(args: string[]): ParseResult {
   const { command, remainingArgs } = detectCommand(args);
+
+  // Handle explicit help/version before option parsing
+  if (command === "help") {
+    return { ok: true, command: "help" };
+  }
+  if (command === "version") {
+    return { ok: true, command: "version" };
+  }
 
   // Determine option definitions based on command
   let optionDefs: Record<string, any>;
@@ -152,6 +246,16 @@ export function parseCliArgs(args: string[]): CliArgs {
       optionDefs = {};
   }
 
+  // Check for duplicate non-repeatable options before parsing
+  const duplicateCheck = trackOptionOccurrences(remainingArgs, optionDefs);
+  if (!duplicateCheck.valid && duplicateCheck.duplicates) {
+    const dupList = duplicateCheck.duplicates.join(", ");
+    return {
+      ok: false,
+      usageError: `Duplicate option(s): ${dupList}. These options may not be repeated.`,
+    };
+  }
+
   try {
     const { values, positionals } = parseArgs({
       args: remainingArgs,
@@ -161,24 +265,24 @@ export function parseCliArgs(args: string[]): CliArgs {
     });
 
     return {
-      command: command as CliArgs["command"],
+      ok: true,
+      command: command as "convert" | "inspect" | "validate" | "schema",
       inputs: positionals,
       options: values as Record<string, unknown>,
     };
   } catch (err) {
     // Strict parse errors are returned as structured usage failures
+    const message = err instanceof Error ? err.message : String(err);
     return {
-      command: "help",
-      inputs: [],
-      options: {
-        __parseError: err instanceof Error ? err.message : String(err),
-      },
+      ok: false,
+      usageError: message,
     };
   }
 }
 
 /**
- * Parse numeric option value from string.
+ * Parse numeric option value from string using canonical grammar.
+ * Only accepts: 0, 1, 2, ..., 999, ... (no signs, no fractions, no trailing junk)
  */
 function parseNumericOption(
   value: unknown,
@@ -189,8 +293,18 @@ function parseNumericOption(
   }
 
   const str = String(value);
+
+  // Validate canonical decimal integer grammar first
+  if (!CANONICAL_INTEGER_REGEX.test(str)) {
+    return {
+      valid: false,
+      error: `Invalid ${name}: '${str}' is not a valid non-negative integer (use 0, 1, 2, ...)`,
+    };
+  }
+
   const num = parseInt(str, 10);
 
+  // Double-check after parsing
   if (isNaN(num) || !Number.isSafeInteger(num) || num < 0) {
     return {
       valid: false,
@@ -208,6 +322,15 @@ function parseNumericOption(
 export function compileNormalizedOptions(
   parsed: CliArgs
 ): CompileResult {
+  // Handle usage errors from parseCliArgs
+  if (!parsed.command || parsed.command === "help" || parsed.command === "version") {
+    return {
+      valid: false,
+      options: null as any,
+      error: "Invalid CLI arguments",
+    };
+  }
+
   const opts = parsed.options;
 
   // Parse command-specific values
