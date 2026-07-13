@@ -88,11 +88,39 @@ export type OnConflict = "error" | "first" | "last";
 export type DiagnosticsMode = "text" | "json" | "jsonl" | "none";
 
 /**
- * Registry configuration.
+ * Registry descriptor for content-addressed registry loading.
+ * Each descriptor is a pinned, content-hash-verified registry source.
+ */
+export interface RegistryDescriptor {
+  /** Absolute path to the registry file */
+  path: string;
+  /** Version string for the registry */
+  version: string;
+  /** SHA-256 hash of the registry content */
+  sha256: string;
+}
+
+/**
+ * Registry configuration with pinned, verified descriptors.
+ * Replaces the old path-only configuration.
  */
 export interface RegistryConfig {
-  setcodeRegistryPath?: string;
-  availabilityRegistryPath?: string;
+  /** Setcode registry descriptor (if provided) */
+  setcodeRegistry?: RegistryDescriptor;
+  /** Availability registry descriptor (if provided) */
+  availabilityRegistry?: RegistryDescriptor;
+}
+
+/**
+ * Normalized registry configuration after loading.
+ */
+export interface NormalizedRegistryConfig {
+  /** Setcode registry data (loaded and verified) */
+  setcode?: unknown;
+  /** Availability registry data (loaded and verified) */
+  availability?: unknown;
+  /** Whether default bundled registries are used */
+  usesDefaults: boolean;
 }
 
 /**

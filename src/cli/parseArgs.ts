@@ -16,11 +16,14 @@ import type {
   ConversionDestination,
   DiagnosticsMode,
   LimitsV1,
+  RegistryConfig,
+  RegistryDescriptor,
 } from "../application/types.js";
 import {
   getDefaultLimits,
   validateLimitRelations,
 } from "../application/types.js";
+import { validateRegistryDescriptor } from "../registry/loadRegistry.js";
 
 /**
  * Parsed CLI arguments.
@@ -61,6 +64,8 @@ const COMMON_OPTIONS = {
   "max-staging-bytes": { type: "string" as const },
   "max-spool-bytes": { type: "string" as const },
   "max-snapshot-bytes": { type: "string" as const },
+  "setcode-registry": { type: "string" as const },
+  "availability-registry": { type: "string" as const },
 };
 
 /**
@@ -152,7 +157,7 @@ export function parseCliArgs(args: string[]): CliArgs {
       args: remainingArgs,
       options: optionDefs as any,
       allowPositionals: true,
-      strict: false, // Use permissive mode for best-effort parsing
+      strict: true, // Strict parsing for CLI safety
     });
 
     return {
@@ -160,11 +165,14 @@ export function parseCliArgs(args: string[]): CliArgs {
       inputs: positionals,
       options: values as Record<string, unknown>,
     };
-  } catch {
+  } catch (err) {
+    // Strict parse errors are returned as structured usage failures
     return {
       command: "help",
       inputs: [],
-      options: {},
+      options: {
+        __parseError: err instanceof Error ? err.message : String(err),
+      },
     };
   }
 }
@@ -316,6 +324,12 @@ export function compileNormalizedOptions(
     return { valid: false, options: null as any, error: limitError };
   }
 
+  // Parse registry options
+  const registries = parseRegistryOptions(opts);
+  if (!registries.valid) {
+    return { valid: false, options: null as any, error: registries.error };
+  }
+
   return {
     valid: true,
     options: {
@@ -340,9 +354,100 @@ export function compileNormalizedOptions(
       followSymlinks: !!opts["follow-symlinks"],
       diagnosticsMode: diagnosticsMode as DiagnosticsMode,
       continueOnError: !!opts["continue-on-error"],
-      registries: {},
+      registries: registries.config,
       signal: undefined,
       cliArgs: parsed.inputs,
     },
+  };
+}
+
+/**
+ * Parse registry options into RegistryDescriptor format.
+ * Format: <path>:<version>@sha256:<hash>
+ */
+function parseRegistryOptions(
+  opts: Record<string, unknown>
+): { valid: boolean; config: RegistryConfig; error?: string } {
+  const config: RegistryConfig = {};
+
+  // Parse setcode-registry
+  const setcodeRegistry = opts["setcode-registry"] as string | undefined;
+  if (setcodeRegistry !== undefined) {
+    const validation = validateRegistryDescriptor(setcodeRegistry);
+    if (!validation.valid) {
+      return { valid: false, config, error: validation.error };
+    }
+
+    const descriptor = parseRegistryDescriptorString(setcodeRegistry);
+    if (!descriptor) {
+      return {
+        valid: false,
+        config,
+        error: `Invalid --setcode-registry format: ${setcodeRegistry}`,
+      };
+    }
+    config.setcodeRegistry = descriptor;
+  }
+
+  // Parse availability-registry
+  const availabilityRegistry = opts["availability-registry"] as string | undefined;
+  if (availabilityRegistry !== undefined) {
+    const validation = validateRegistryDescriptor(availabilityRegistry);
+    if (!validation.valid) {
+      return { valid: false, config, error: validation.error };
+    }
+
+    const descriptor = parseRegistryDescriptorString(availabilityRegistry);
+    if (!descriptor) {
+      return {
+        valid: false,
+        config,
+        error: `Invalid --availability-registry format: ${availabilityRegistry}`,
+      };
+    }
+    config.availabilityRegistry = descriptor;
+  }
+
+  return { valid: true, config };
+}
+
+/**
+ * Parse a registry descriptor string into a RegistryDescriptor.
+ * Format: <path>:<version>@sha256:<hash>
+ * The path can contain colons (e.g., Windows paths or URLs).
+ * The @sha256: prefix marks the start of the hash.
+ */
+function parseRegistryDescriptorString(descriptor: string): RegistryDescriptor | null {
+  // Find the @sha256: marker and split there
+  const markerIndex = descriptor.lastIndexOf("@sha256:");
+  if (markerIndex === -1) {
+    return null;
+  }
+
+  const hashPart = descriptor.substring(markerIndex + 8); // Skip "@sha256:"
+  const beforeMarker = descriptor.substring(0, markerIndex);
+
+  // Validate hash (64 hex characters)
+  if (!/^[a-f0-9]{64}$/.test(hashPart)) {
+    return null;
+  }
+
+  // Find the last colon before @sha256: to separate path from version
+  const lastColonIndex = beforeMarker.lastIndexOf(":");
+  if (lastColonIndex === -1) {
+    return null;
+  }
+
+  const path = beforeMarker.substring(0, lastColonIndex);
+  const version = beforeMarker.substring(lastColonIndex + 1);
+
+  if (!path || !version) {
+    return null;
+  }
+
+  return {
+    path,
+    version,
+    sha256: hashPart,
   };
 }
