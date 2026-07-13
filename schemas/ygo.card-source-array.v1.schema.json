@@ -3,13 +3,6 @@
   "$id": "ygo.card-source-array/1",
   "title": "YGO Card Source Document Array",
   "description": "Array of provenance-rich source documents for YGO-DSL translation.",
-  "type": "object",
-  "required": ["schema", "documents"],
-  "properties": {
-    "schema": { "const": "ygo.card-source-array/1" },
-    "documents": {
-      "type": "array",
-      "items": { "$ref": "ygo.card-source/1" }
-    }
-  }
+  "type": "array",
+  "items": { "$ref": "ygo.card-source/1" }
 }

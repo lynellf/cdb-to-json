@@ -100,31 +100,29 @@ describe("Schema validation", () => {
     expect(textsProps?.desc?.type).toContain("null");
   });
 
-  it("card-array schema has correct identifier and references card schema", () => {
+  it("card-array schema is top-level array and references card schema", () => {
     const schema = loadSchema("cdb.card-array.v2.schema.json") as {
       $id?: string;
-      properties?: {
-        cards?: {
-          items?: { $ref?: string };
-        };
-      };
+      type?: string;
+      items?: { $ref?: string };
     };
     expect(schema.$id).toBe("cdb.card-array/2");
+    // Should be a top-level array, not a wrapper object
+    expect(schema.type).toBe("array");
     // Should reference the card schema
-    expect(schema.properties?.cards?.items?.$ref).toBe("cdb.card/2");
+    expect(schema.items?.$ref).toBe("cdb.card/2");
   });
 
-  it("card-source-array schema has correct identifier and references source schema", () => {
+  it("card-source-array schema is top-level array and references source schema", () => {
     const schema = loadSchema("ygo.card-source-array.v1.schema.json") as {
       $id?: string;
-      properties?: {
-        documents?: {
-          items?: { $ref?: string };
-        };
-      };
+      type?: string;
+      items?: { $ref?: string };
     };
     expect(schema.$id).toBe("ygo.card-source-array/1");
+    // Should be a top-level array, not a wrapper object
+    expect(schema.type).toBe("array");
     // Should reference the source schema
-    expect(schema.properties?.documents?.items?.$ref).toBe("ygo.card-source/1");
+    expect(schema.items?.$ref).toBe("ygo.card-source/1");
   });
 });
