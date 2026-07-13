@@ -2,7 +2,11 @@
  * Deterministic async iterator for raw CDB card rows.
  *
  * Owns the complete reader lifecycle:
- * snapshot → materialize → open → preflight → iterate → close.
+ * sourceHandle acquisition → snapshot → materialize → open → preflight → iterate → close.
+ *
+ * The SourceHandle is acquired once at the start of iteration and retained until
+ * after the final identity recheck, at which point it is closed in finally.
+ * WAL/SHM bytes are read through the handle's descriptors, not by path reopening.
  */
 
 import type Database from "better-sqlite3";
@@ -10,6 +14,7 @@ import type { RawCardRows, RawDatasRow, RawTextsRow } from "./rawTypes.js";
 import type { LimitsV1 } from "../application/types.js";
 import { acquireSnapshotBundle, type SnapshotBundle } from "./snapshotBundle.js";
 import { materializeSnapshot, cleanupMaterializeDir } from "./materializeSnapshot.js";
+import { acquireSourceHandle, type SourceHandle } from "./sourceHandle.js";
 import { preflightTextColumns } from "./textPreflight.js";
 import { openDatabaseSafe, closeDatabaseSafe } from "./openDatabase.js";
 import { DiagnosticCollector } from "../diagnostics/collector.js";
@@ -46,9 +51,26 @@ export type MetadataCallback = (metadata: RawDatabaseMetadata) => void;
  * Options for reading card rows as an async iterator.
  */
 export interface IterateRawCardsOptions {
+  /**
+   * Signal to abort the operation.
+   */
   signal?: AbortSignal;
+  /**
+   * Limits for row iteration.
+   */
   limits?: LimitsV1;
+  /**
+   * If true, follow symlinks when opening the source database.
+   * Default is false (no-follow, symlinks are rejected).
+   */
+  followSymlinks?: boolean;
+  /**
+   * Strict mode for parsing.
+   */
   strict?: boolean;
+  /**
+   * Optional diagnostic collector.
+   */
   diagnostics?: DiagnosticCollector;
   /**
    * Optional callback invoked once with verified database metadata
@@ -72,12 +94,13 @@ export async function* iterateRawCards(
   databasePath: string,
   options: IterateRawCardsOptions = {}
 ): AsyncIterableIterator<RawCardRows> {
-  const { signal, limits, diagnostics, onMetadata } = options;
+  const { signal, limits, diagnostics, onMetadata, followSymlinks = false } = options;
   const maxRowsPerTable = limits?.maxRowsPerTable ?? 1_000_000;
   const maxTextBytes = limits?.maxTextBytes ?? 4 * 1024 * 1024;
   const maxSnapshotBytes = limits?.maxSnapshotBytes ?? 4 * 1024 * 1024 * 1024;
 
   // Track cleanup resources
+  let sourceHandle: SourceHandle | null = null;
   let snapshotBundle: SnapshotBundle | null = null;
   let materializedPath: string | null = null;
   let materializeDir: string | null = null;
@@ -90,9 +113,23 @@ export async function* iterateRawCards(
     // Check abort signal before starting
     checkAborted(signal);
 
-    // Phase 1: Acquire snapshot bundle
+    // Phase 0: Acquire opaque SourceHandle for this input.
+    // This opens the source main fd and parent fd once, captures the identity,
+    // and retains them for all subsequent reads through the descriptor boundary.
+    // No bytes may be read by path reopening after this point.
+    sourceHandle = await acquireSourceHandle(databasePath, {
+      followSymlinks,
+      diagnostics,
+    });
+
+    checkAborted(signal);
+
+    // Phase 1: Acquire snapshot bundle through the bound SourceHandle.
+    // All source bytes (main, WAL, SHM) are read through the handle's descriptors.
+    // The returned bundle retains a reference to the same SourceHandle for later
+    // final identity recheck.
     snapshotBundle = await acquireSnapshotBundle(
-      databasePath,
+      sourceHandle,
       null,
       maxSnapshotBytes,
       diagnostics
@@ -390,18 +427,19 @@ export async function* iterateRawCards(
       );
     }
   } finally {
-    // Cleanup in reverse order
+    // Cleanup in reverse order:
+    // 1. Close SQLite connection to materialized database
     if (db) {
       closeDatabaseSafe(db);
       db = null;
     }
 
-    // Clean up materialized directory
+    // 2. Clean up materialized directory
     if (materializeDir) {
       cleanupMaterializeDir(materializeDir);
     }
 
-    // Clean up snapshot staging directory
+    // 3. Clean up snapshot staging directory
     if (snapshotBundle) {
       const { rm } = await import("node:fs/promises");
       try {
@@ -409,6 +447,17 @@ export async function* iterateRawCards(
       } catch {
         // Ignore cleanup errors
       }
+    }
+
+    // 4. Close the SourceHandle and its owned descriptors.
+    // This is the last step in reader-owned cleanup, AFTER all private
+    // artifacts (materialized, staging) have been removed.
+    // Note: The SourceHandle was verified during snapshot acquisition (via
+    // verifyMainIdentity). The final post-read identity recheck and publication
+    // barrier happen at the application level, not here.
+    if (sourceHandle) {
+      await sourceHandle.close().catch(() => {});
+      sourceHandle = null;
     }
   }
 }
