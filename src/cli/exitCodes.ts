@@ -2,7 +2,7 @@
  * Exit codes and precedence for the CLI.
  * These are stable and machine-readable.
  *
- * Precedence: 2 > 3 > 4 > 5 > 6 > 7 > 1
+ * Precedence: 2 > 6 > 3 > 4 > 5 > 7 > 1
  */
 
 export const ExitCode = {
@@ -46,32 +46,43 @@ export interface ExitCodeState {
 
 /**
  * Compute the appropriate exit code from the complete state.
- * Precedence: 2 > 3 > 4 > 5 > 6 > 7 > 1
+ * Precedence: 2 > 6 > 3 > 4 > 5 > 7 > 1
+ *
+ * Per the execution contract predicate matrix:
+ * - option/invalid-limit: exit 2 (highest)
+ * - output/cancellation: exit 6 (preempts no-input)
+ * - !hasUsableInput && no input access started: exit 3
+ * - input/schema/strict/resource/integer failure: exit 4
+ * - merge collision: exit 5
+ * - partial (continued + completed + failed): exit 7
+ * - unexpected internal: exit 1
+ * - otherwise success: exit 0
  */
 export function computeExitCode(state: ExitCodeState): ExitCode {
-  // Option validation takes highest precedence
+  // Option validation takes highest precedence (2)
   if (state.optionError) {
     return ExitCode.INVALID_USAGE;
   }
 
-  // No usable input
+  // Output error / cancellation (6) takes precedence over no-input (3).
+  // An output failure should not be silently downgraded to "no usable input".
+  if (state.outputError || state.cancelled) {
+    return ExitCode.OUTPUT_ERROR;
+  }
+
+  // No usable input (3) - only when no output/cancellation has occurred
   if (!state.hasUsableInput) {
     return ExitCode.NO_INPUT;
   }
 
-  // Input/schema/strict/resource/integer failure
+  // Input/schema/strict/resource/integer failure (4)
   if (state.inputError || state.strictFailure || state.resourceOrIntegerFailure) {
     return ExitCode.VALIDATION_ERROR;
   }
 
-  // Merge collision takes precedence over output when no output has failed
+  // Merge collision (5) - data-level errors before partial conversion
   if (state.mergeCollision) {
     return ExitCode.COLLISION;
-  }
-
-  // Output error / cancellation
-  if (state.outputError || state.cancelled) {
-    return ExitCode.OUTPUT_ERROR;
   }
 
   // Partial conversion requires continued processing,

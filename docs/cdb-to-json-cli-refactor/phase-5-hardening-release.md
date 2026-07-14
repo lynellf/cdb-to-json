@@ -1,4 +1,4 @@
-# Phase 5 — Hardening, migration, package, and release gate
+# Phase P6 — Hardening, migration, package, and release gate (delivery Phase 5)
 
 ## Outcome
 
@@ -10,7 +10,7 @@ Make the refactor installable and supportable as 2.0.0. Document migration and p
 
 Update `package.json` to version 2.0.0 when release is approved, set `main` to `dist/index.js` (never the source-tree `app/index.js`), set `bin.cdb-to-json` to `dist/cli.js`, expose typed modern APIs from `.`, retain the deprecated default legacy export, expose `./schemas/*`, and include only `dist`, `schemas`, README, and license in the package. `app/index.js` remains a source-tree ESM shim used by compatibility tests and is explicitly not a packed-package API. Add a shebang to the CLI entrypoint and verify executable permissions after `npm pack`.
 
-The packed-artifact test must import the root default legacy export and named `convert()` from a clean temporary install, run the documented v1-shaped call twice against an existing output file, and assert that legacy replacement is atomic and a failed second conversion preserves the prior final. It must assert that `require`/import resolution does not point at a missing `app/index.js`, and that the declared `main`, `exports`, `bin`, and `files` metadata agree with the tarball contents.
+The packed-artifact test must import the root default legacy export and named `convert()`, `iterateRawCards()`, `normalizeCard()`, and `toSourceDocument()` from a clean temporary install, run the documented v1-shaped call twice against an existing output file, and assert that legacy replacement is atomic and a failed second conversion preserves the prior final. It must assert that `require`/import resolution does not point at a missing `app/index.js`, and that the declared `main`, `exports`, `bin`, and `files` metadata agree with the tarball contents. The exact evidence command is `npm run package:check && npx vitest run tests/package/packageContents.test.ts tests/package/packedCli.test.ts`.
 
 **Files:** `package.json`, `package-lock.json`, `src/index.ts`, `src/cli.ts`, `README.md`.
 
@@ -30,9 +30,24 @@ Add CI configuration under `.github/workflows/` for the supported Node/OS matrix
 
 ### 5.4 Benchmark without making speculative performance claims
 
-Create `benchmarks/convert-full-cdb.ts` and a script that reports elapsed time, peak heap, output bytes, and profile/format. Run it against the existing full CDB fixture and a generated high-cardinality fixture. Keep the root spec's provisional under-10-second/under-256 MiB values as measured targets until the supported hardware/CI baseline is recorded; do not fail release on an uncalibrated machine-specific number.
+Create `benchmarks/convert-full-cdb.ts` and the exact `npm run benchmark` interface. Run:
 
-**Files:** `benchmarks/convert-full-cdb.ts`, `package.json` benchmark script, `docs/performance.md` if measurements are recorded.
+```bash
+npm run benchmark -- --full-cdb __tests__/input_dir/cards.cdb \
+  --high-cardinality benchmarks/fixtures/high-cardinality.cdb \
+  --profile raw --format json \
+  --report benchmarks/reports/convert-full-cdb.json
+```
+
+The command takes both named fixture arguments and writes JSON with one result per
+fixture. Each result must contain `elapsedMs`, `peakHeapBytes`, `outputBytes`,
+`profile`, `format`, `nodeVersion`, and `fixtureIdentity`; the report includes the
+command/environment metadata and does not apply an uncalibrated threshold. Keep the
+root spec's provisional under-10-second/under-256 MiB values as measured targets
+until the supported hardware/CI baseline is recorded; do not fail release on a
+machine-specific number.
+
+**Files:** `benchmarks/convert-full-cdb.ts`, `benchmarks/fixtures/high-cardinality.cdb`, `benchmarks/reports/convert-full-cdb.json`, `package.json` benchmark script, `docs/performance.md` if measurements are recorded.
 
 ### 5.5 Execute final conformance and rollback rehearsal
 
@@ -79,10 +94,11 @@ The release gate must include a many-output no-continue run that exceeds aggrega
 
 ## Revision-5 secure publication and snapshot release additions
 
-1. Declare the hardening support matrix in `README.md`, `docs/migration-v1-to-v2.md`, and package metadata: secure file/split output is Node 22+ Linux only when the native `openat2`/`*at` adapter capability probe passes; stdout remains cross-platform; unsupported capability returns `UNSAFE_DESTINATION_FILESYSTEM` before input opening. The release must not advertise a path-based fallback.
+1. Declare the hardening support matrix in `README.md`, `docs/migration-v1-to-v2.md`, and package metadata: secure file/split output is Node 22+ Linux only when the native capability probe passes `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, no-follow traversal, descriptor-relative named `openat(O_CREAT|O_EXCL|O_NOFOLLOW)` temp/lock creation, and separate `renameat2` no-replace/force operations. This is the selected equivalent under the senior D5 decision; `O_TMPFILE`, `linkat`, and path-based lock/rename helpers are not used. Stdout remains cross-platform; unsupported capability returns `UNSAFE_DESTINATION_FILESYSTEM` before input opening. The release must not advertise a path-based fallback.
 2. Build and test `native/secure-destination/` in CI before TypeScript tests. `npm run build:native` MUST use the pinned `node-gyp` toolchain and checked-in `binding.gyp`, produce exactly `dist/native/secure_destination.node`, and write a capability-manifest checksum consumed by `src/destinations/nativeLoader.ts`. The package `files` allowlist MUST include `dist` so the loader, manifest, and native module ship together; the package check fails on a release host if any is absent. Clean-install tests must verify the same capability and failure mode as the source tree. `npm run build` must include the native build prerequisite, while stdout-only tests remain runnable on unsupported hosts.
 3. Add release cases for `tests/reader/walMaterialization.test.ts`, `tests/reader/textByteFidelity.test.ts`, `tests/reader/stagingSnapshotBudget.test.ts`, `tests/cli/freshSplitRoot.test.ts`, `tests/cli/secureDestinationRace.test.ts`, `tests/cli/limitRelations.test.ts`, and `tests/api/iterateRawCards.test.ts`. Verify WAL-only data, no source mutation/sidecars, strict UTF-8, pre-copy budget failure, fresh-root rejection, parent-swap resistance, reject-only relations, and async cancellation from the packed artifact.
 4. Verify rollback by importing the v1-shaped default through `app/index.js` and the packed root while modern secure-destination failures leave prior finals untouched. Do not weaken the native requirement to make a non-Linux package test pass; route stdout-only compatibility tests separately.
+5. Release-gate the Revision-11 closures: source members are acquired through held no-symlink descriptors and fstat-verified before copy/hash; source spans use required `text.sections`/`text.sourceSpans` slices with copied text/start/end/kind/basis and no `identity.databaseSha256`; `maxSnapshotBytes` is enforced chunk-by-chunk through source growth and generated-private materialization; and no-continue multi-output publication uses a journaled commit set with reverse rollback/force-backup restoration. Run `tests/reader/sourceMemberSwap.test.ts`, `tests/cli/commitSetRollback.test.ts`, and `tests/cli/commitSetRecovery.test.ts` from the packed artifact or declared release-equivalent harness.
 
 ### Revision-5 release gate commands
 
@@ -101,4 +117,10 @@ npm test
 npm run package:check
 ```
 
-The gate is blocked if a split root can adopt an existing directory, a source is read live after WAL capture, native capability failure falls back to string paths, a physical reorder leaves `sourceRevisionId` unchanged, or any pre-commit abort leaves snapshot/materialized/output artifacts.
+The gate is blocked if a split root can adopt an existing directory, a source is read live after WAL capture, source acquisition copies through a path after lstat or follows a member swap, native capability failure falls back to string paths, a physical reorder leaves `sourceRevisionId` unchanged or introduces `identity.databaseSha256`, a source span omits copied text/start/end/kind/basis, `maxSnapshotBytes` is enforced only by its pre-copy estimate, a between-final failure leaves an undocumented partial set, or any pre-commit abort leaves snapshot/materialized/output artifacts.
+
+Revision-12 release rehearsal additionally runs the materialization-quota,
+source-parent/same-inode, legacy-publication-security, and orphan-journal tests
+from `phase-r11-enforcement-and-gates.md`. The packed artifact must use the same
+native capability matrix for legacy and modern output, retain identity-guarded
+recovery state after interruption, and refuse a stale dispatch evidence record.

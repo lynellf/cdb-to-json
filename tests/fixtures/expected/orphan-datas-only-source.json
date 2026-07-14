@@ -1,0 +1,74 @@
+{
+  "schema": "ygo.card-source/1",
+  "sourceRevisionId": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "identity": {
+    "externalIds": [
+      { "namespace": "cdb-to-json", "value": "9999" }
+    ],
+    "aliasOf": null
+  },
+  "locale": "en",
+  "printed": {
+    "name": null,
+    "cardKind": "MONSTER",
+    "traits": [],
+    "monster": null
+  },
+  "text": {
+    "raw": null,
+    "normalized": null,
+    "normalizationVersion": "text-normalization/1",
+    "spansBasis": "utf-16-code-units",
+    "offsetEncoding": "utf-16-code-units",
+    "sections": {
+      "material": null,
+      "pendulumEffect": null,
+      "monsterEffect": null,
+      "spellTrapEffect": null,
+      "flavor": null,
+      "unclassified": [],
+      "segmentation": "UNSPLIT"
+    },
+    "sourceSpans": []
+  },
+  "simulatorSource": {
+    "ecosystem": "EDOPRO",
+    "database": {
+      "fileName": "orphan-test.cdb",
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rawRows": {
+      "datas": null,
+      "texts": null
+    },
+    "decoded": {
+      "setcodes": [],
+      "availability": [],
+      "categoryFlags": [],
+      "auxiliaryStrings": []
+    }
+  },
+  "references": {
+    "scripts": [],
+    "rulings": []
+  },
+  "coverage": {
+    "status": "SOURCE_ONLY",
+    "assumptions": [
+      "Card has datas row but no texts row; name and description are derived from raw data."
+    ],
+    "unsupported": []
+  },
+  "provenance": {
+    "converter": "cdb-to-json/2.0.0",
+    "normalizationRegistry": "cdb-normalization/1",
+    "conversionOptionsHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "diagnostics": [
+    {
+      "code": "MISSING_TEXT_ROW",
+      "severity": "WARNING",
+      "message": "Card ID 9999 has a datas row but no matching texts row."
+    }
+  ]
+}

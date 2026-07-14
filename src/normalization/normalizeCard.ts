@@ -154,6 +154,25 @@ export function normalizeCard(
 
   // Decode progression (level/rank/link/pendulum)
   const progression = decodeProgression(levelValue, typeValue);
+
+  // Per INV-007: emit CONFLICTING_PROGRESSION_FLAGS as a warning (promoted to error in strict mode)
+  if (progression.conflictingTypes.length > 0) {
+    diagnostics.warning(
+      DiagnosticCode.CONFLICTING_PROGRESSION_FLAGS,
+      `Conflicting progression bits in type field: ${progression.conflictingTypes.join(" + ")}`,
+      {
+        source: { database: context.sourceNamespace, cardId: id },
+        // Retain exact raw decimal strings per spec.md:165
+        rawValue: datas?.level ?? "0",
+        details: {
+          // Retain exact raw type string per spec.md:117
+          rawType: datas?.type ?? "0",
+          conflictingTypes: progression.conflictingTypes,
+        },
+      }
+    );
+  }
+
   if (progression.unknownBits !== 0) {
     diagnostics.warning(DiagnosticCode.INVALID_PACKED_LEVEL, `Invalid packed level: unknown bits`, {
       source: { database: context.sourceNamespace, cardId: id },

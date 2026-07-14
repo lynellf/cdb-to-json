@@ -15,10 +15,18 @@
  * copy lifecycle.
  */
 
-import { openSync, closeSync, fstatSync } from "node:fs";
-import { basename } from "node:path";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { basename, isAbsolute } from "node:path";
+import { createHash } from "node:crypto";
 import { DiagnosticCollector } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
+import { openRelativeDescriptor } from "../destinations/nativeAdapter.js";
+
+const SOURCE_DIRECTORY_FLAGS =
+  constants.O_RDONLY | constants.O_DIRECTORY | 0x80000; // Linux O_CLOEXEC
+const SOURCE_FILE_FLAGS =
+  constants.O_RDONLY | constants.O_NOFOLLOW | 0x80000; // Linux O_CLOEXEC
+const SOURCE_HASH_CHUNK_BYTES = 1024 * 1024;
 
 /**
  * Identity of a regular file, captured at acquisition time.
@@ -51,6 +59,9 @@ export interface SourceHandle {
    */
   readonly mainIdentity: FileIdentity;
 
+  /** SHA-256 captured from the held main descriptor at acquisition. */
+  readonly mainDigest: string;
+
   /**
    * Open file descriptor for the source main file.
    * Owned by this handle; close via `close()`.
@@ -75,7 +86,11 @@ export interface SourceHandle {
    * Returns null if the member does not exist.
    * Throws if the member exists but is not a regular file.
    */
-  openMember(memberSuffix: "-wal" | "-shm"): Promise<{ fd: number; stat: Awaited<ReturnType<typeof fstatSync>> } | null>;
+  openMember(memberSuffix: "-wal" | "-shm"): Promise<{
+    fd: number;
+    stat: Awaited<ReturnType<typeof fstatSync>>;
+    digest: string;
+  } | null>;
 
   /**
    * Verify that the current on-disk identity of the main file matches the
@@ -136,6 +151,77 @@ function validateLeaf(leaf: string, context: string): void {
   }
 }
 
+function hashDescriptor(fd: number, size: number): string {
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(Math.min(SOURCE_HASH_CHUNK_BYTES, Math.max(size, 1)));
+  let offset = 0;
+
+  while (offset < size) {
+    const requested = Math.min(chunk.length, size - offset);
+    const bytesRead = readSync(fd, chunk, 0, requested, offset) as number;
+    if (bytesRead === 0) {
+      throw new Error(`Unexpected end of source descriptor at byte ${offset}`);
+    }
+    hash.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+
+  return hash.digest("hex");
+}
+
+function openRelativeOrThrow(
+  parentFd: number,
+  leaf: string,
+  flags: number,
+  context: string,
+): number {
+  const result = openRelativeDescriptor(parentFd, leaf, flags);
+  if (!result.success) {
+    const error = new Error(
+      `${context}: ${result.error_msg || "descriptor-relative open failed"} (${result.errcode})`,
+    ) as NodeJS.ErrnoException;
+    if (result.errcode === 2) error.code = "ENOENT";
+    if (result.errcode === 20) error.code = "ENOTDIR";
+    if (result.errcode === 40) error.code = "ELOOP";
+    throw error;
+  }
+  return result.fd;
+}
+
+/**
+ * Acquire the final parent descriptor by walking from one held anchor.
+ * No component after the anchor is resolved through AT_FDCWD or a joined path.
+ */
+function openSourceParent(sourcePath: string): number {
+  const anchorFd = openSync(isAbsolute(sourcePath) ? "/" : ".", SOURCE_DIRECTORY_FLAGS);
+  const mainLeaf = basename(sourcePath);
+  const parentText = sourcePath.slice(0, sourcePath.length - mainLeaf.length);
+  const components = parentText
+    .split("/")
+    .filter((component) => component.length > 0 && component !== ".");
+  let currentFd = anchorFd;
+
+  try {
+    for (const component of components) {
+      if (component === ".." || component.includes("\\") || component.includes("\0")) {
+        throw new Error(`SourceHandle: unsafe parent component: ${component}`);
+      }
+      const nextFd = openRelativeOrThrow(
+        currentFd,
+        component,
+        SOURCE_DIRECTORY_FLAGS,
+        `SourceHandle: parent component ${component}`,
+      );
+      closeSync(currentFd);
+      currentFd = nextFd;
+    }
+    return currentFd;
+  } catch (error) {
+    try { closeSync(currentFd); } catch { /* best effort */ }
+    throw error;
+  }
+}
+
 /**
  * Acquire an opaque source handle for the given database path.
  *
@@ -153,26 +239,27 @@ export function acquireSourceHandle(
   sourcePath: string,
   _options: AcquireSourceOptions = {}
 ): SourceHandle {
-  const { followSymlinks: _followSymlinks = false, diagnostics } = _options;
+  const { diagnostics } = _options;
 
   // Extract the leaf (filename) from the path
   const mainLeaf = basename(sourcePath);
   validateLeaf(mainLeaf, "SourceHandle: main leaf");
 
-  // Validate parent directory
-  const parentDir = sourcePath.substring(0, sourcePath.lastIndexOf(mainLeaf));
-  const effectiveParent = parentDir === "" ? "." : parentDir;
-
-  // Open the parent directory first
-  const parentFd = openSync(effectiveParent, "r");
+  // Hold the parent before observing or opening the source leaf.
+  const parentFd = openSourceParent(sourcePath);
 
   let mainFd: number | null = null;
   let capturedMainIdentity: FileIdentity | null = null;
+  let capturedMainDigest: string | null = null;
+  let capturedParentIdentity: FileIdentity | null = null;
 
   try {
-    // Open the main file. followSymlinks=false is the default (no O_NOFOLLOW
-    // is implicit since we verify via fstatSync below).
-    mainFd = openSync(sourcePath, "r");
+    mainFd = openRelativeOrThrow(
+      parentFd,
+      mainLeaf,
+      SOURCE_FILE_FLAGS,
+      `SourceHandle: main member ${mainLeaf}`,
+    );
 
     // Capture the main file identity using fstatSync on the open descriptor
     const mainStats = fstatSync(mainFd);
@@ -189,6 +276,18 @@ export function acquireSourceHandle(
       inode: mainStats.ino,
       type: "regular",
       size: mainStats.size,
+    };
+    capturedMainDigest = hashDescriptor(mainFd, mainStats.size);
+
+    const parentStats = fstatSync(parentFd);
+    if (!parentStats.isDirectory()) {
+      throw new Error(`Source parent is not a directory: ${sourcePath}`);
+    }
+    capturedParentIdentity = {
+      device: parentStats.dev,
+      inode: parentStats.ino,
+      type: "directory",
+      size: parentStats.size,
     };
   } catch (error) {
     // Clean up on failure
@@ -209,7 +308,9 @@ export function acquireSourceHandle(
     mainFd!,
     parentFd,
     mainLeaf,
-    capturedMainIdentity!
+    capturedMainIdentity!,
+    capturedMainDigest!,
+    capturedParentIdentity!,
   );
 }
 
@@ -222,6 +323,8 @@ class SourceHandleImpl implements SourceHandle {
   readonly parentFd: number;
   readonly mainLeaf: string;
   readonly mainIdentity: FileIdentity;
+  readonly mainDigest: string;
+  private readonly parentIdentity: FileIdentity;
   private _closed = false;
 
   constructor(
@@ -229,25 +332,49 @@ class SourceHandleImpl implements SourceHandle {
     mainFd: number,
     parentFd: number,
     mainLeaf: string,
-    mainIdentity: FileIdentity
+    mainIdentity: FileIdentity,
+    mainDigest: string,
+    parentIdentity: FileIdentity,
   ) {
     this.sourcePath = sourcePath;
     this.mainFd = mainFd;
     this.parentFd = parentFd;
     this.mainLeaf = mainLeaf;
     this.mainIdentity = mainIdentity;
+    this.mainDigest = mainDigest;
+    this.parentIdentity = parentIdentity;
   }
 
-  openMember(memberSuffix: "-wal" | "-shm"): Promise<{ fd: number; stat: Awaited<ReturnType<typeof fstatSync>> } | null> {
+  openMember(memberSuffix: "-wal" | "-shm"): Promise<{
+    fd: number;
+    stat: Awaited<ReturnType<typeof fstatSync>>;
+    digest: string;
+  } | null> {
     return Promise.resolve().then(() => {
       if (this._closed) {
         throw new Error("SourceHandle is already closed");
       }
 
-      const memberPath = this.sourcePath + memberSuffix;
+      const parentStats = fstatSync(this.parentFd);
+      if (
+        parentStats.dev !== this.parentIdentity.device ||
+        parentStats.ino !== this.parentIdentity.inode ||
+        !parentStats.isDirectory()
+      ) {
+        throw new SourceMutatedError(
+          `Source parent changed while opening ${memberSuffix}: ${this.sourcePath}`,
+        );
+      }
+
+      const memberLeaf = `${this.mainLeaf}${memberSuffix}`;
       let fd: number;
       try {
-        fd = openSync(memberPath, "r");
+        fd = openRelativeOrThrow(
+          this.parentFd,
+          memberLeaf,
+          SOURCE_FILE_FLAGS,
+          `SourceHandle: member ${memberSuffix}`,
+        );
       } catch (error: unknown) {
         // ENOENT means the member doesn't exist — this is allowed
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -261,9 +388,9 @@ class SourceHandleImpl implements SourceHandle {
         const stats = fstatSync(fd);
         if (!stats.isFile()) {
           try { closeSync(fd); } catch { /* best effort */ }
-          throw new Error(`Member ${memberSuffix} is not a regular file: ${memberPath}`);
+          throw new Error(`Member ${memberSuffix} is not a regular file: ${this.sourcePath}`);
         }
-        return { fd, stat: stats };
+        return { fd, stat: stats, digest: hashDescriptor(fd, stats.size) };
       } catch (error) {
         try { closeSync(fd); } catch { /* best effort */ }
         throw error;
@@ -301,6 +428,29 @@ class SourceHandleImpl implements SourceHandle {
                 currentSize: currentStats.size,
               },
             }
+          );
+          throw error;
+        }
+
+        const currentDigest = hashDescriptor(this.mainFd, currentStats.size);
+        if (currentDigest !== this.mainDigest) {
+          const error = new SourceMutatedError(
+            `Source main bytes changed while held: ${this.sourcePath}`,
+          );
+          diagnostics?.error(
+            DiagnosticCode.SOURCE_MUTATED_DURING_READ,
+            error.message,
+            {
+              source: { database: this.sourcePath },
+              details: {
+                originalInode: this.mainIdentity.inode,
+                currentInode: currentStats.ino,
+                originalSize: this.mainIdentity.size,
+                currentSize: currentStats.size,
+                originalDigest: this.mainDigest,
+                currentDigest,
+              },
+            },
           );
           throw error;
         }

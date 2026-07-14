@@ -1,187 +1,309 @@
 #!/usr/bin/env node
 
 /**
- * Build the native secure-destination N-API module.
- * On supported Linux: rebuild with node-gyp, verify, and copy to dist/native/.
- * On unsupported hosts: remove any stale module, write unsupported manifest.
+ * Build and attest the native secure-destination boundary.
+ *
+ * The exported runNativeBuild function is deliberately import-safe. It takes
+ * the repository root, host metadata, build step, and capability probe as
+ * explicit inputs so cleanup and post-copy probe outcomes can be tested
+ * without depending on the current machine or a compiler.
  */
 
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, cpSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { platform, arch } from "node:process";
-import { join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const MODULE_SRC = "native/secure-destination";
-const MODULE_DIST = "dist/native";
 const MODULE_NAME = "secure_destination.node";
+const ZERO_HASH = "0".repeat(64);
+const REQUIRED_PRIMITIVES = ["openat", "openat2", "renameat2"];
+const REQUIRED_FLAGS = ["RESOLVE_BENEATH", "RESOLVE_NO_SYMLINKS"];
 
-const isSupported =
-  platform === "linux" &&
-  (arch === "x64" || arch === "arm64") &&
-  process.version.startsWith("v22");
+/** @typedef {{ platform: string, arch: string, nodeVersion: string, nodeAbi: string, napiVersion: number }} NativeBuildHost */
+/** @typedef {{ supported: boolean, supportsOpenAt2: boolean, supportsRenameAt2: boolean, supportsNoReplace: boolean, supportedPrimitives: string[] }} PrimitiveProbe */
+/** @typedef {{ supported: boolean, supportedPrimitives: string[], requiredFlags: string[], primitiveProbeResults: PrimitiveProbe }} NativeProbe */
+/** @typedef {{ rootDir: string, sourceDir: string, modulePath: string }} NativeBuildContext */
+/** @typedef {{ supported: boolean, failed: boolean, modulePath: string, manifestPath: string, error?: string }} NativeBuildResult */
 
-function computeSha256(filePath) {
-  const content = readFileSync(filePath);
-  return createHash("sha256").update(content).digest("hex");
+function getHostFromProcess() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.version,
+    nodeAbi: process.versions.modules ?? "unknown",
+    napiVersion: Number(process.versions.napi ?? 0),
+  };
 }
 
-// Ensure dist/native exists
-if (!existsSync(MODULE_DIST)) {
-  mkdirSync(MODULE_DIST, { recursive: true });
+function getPaths(rootDir) {
+  const sourceDir = join(rootDir, "native", "secure-destination");
+  const nativeDist = join(rootDir, "dist", "native");
+  return {
+    sourceDir,
+    nativeDist,
+    modulePath: join(nativeDist, MODULE_NAME),
+    manifestPath: join(nativeDist, "capability.json"),
+  };
 }
 
-if (!isSupported) {
-  // Remove any stale module
-  const staleModule = `${MODULE_DIST}/${MODULE_NAME}`;
-  if (existsSync(staleModule)) {
-    rmSync(staleModule);
+function removeModule(modulePath) {
+  rmSync(modulePath, { force: true });
+}
+
+function moduleSha256(modulePath) {
+  return createHash("sha256").update(readFileSync(modulePath)).digest("hex");
+}
+
+function unsupportedManifest(host) {
+  return {
+    platform: host.platform,
+    arch: host.arch,
+    nodeAbi: host.nodeAbi,
+    napiVersion: host.napiVersion,
+    moduleSha256: ZERO_HASH,
+    supported: false,
+    supportedPrimitives: [],
+    requiredFlags: [],
+    primitiveProbeResults: {
+      supported: false,
+      supportsOpenAt2: false,
+      supportsRenameAt2: false,
+      supportsNoReplace: false,
+      supportedPrimitives: [],
+    },
+  };
+}
+
+function writeManifest(manifestPath, manifest) {
+  mkdirSync(dirname(manifestPath), { recursive: true });
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function isSupportedHost(host) {
+  if (host.platform !== "linux") return false;
+  if (host.arch !== "x64" && host.arch !== "arm64") return false;
+  const match = /^v(\d+)/.exec(host.nodeVersion);
+  return match !== null && Number(match[1]) >= 22;
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isPrimitiveProbe(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof value.supported === "boolean" &&
+    typeof value.supportsOpenAt2 === "boolean" &&
+    typeof value.supportsRenameAt2 === "boolean" &&
+    typeof value.supportsNoReplace === "boolean" &&
+    isStringArray(value.supportedPrimitives)
+  );
+}
+
+function validateProbe(value) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    typeof value.supported !== "boolean" ||
+    !isStringArray(value.supportedPrimitives) ||
+    !isStringArray(value.requiredFlags) ||
+    !isPrimitiveProbe(value.primitiveProbeResults)
+  ) {
+    return { valid: false, reason: "Capability probe returned a malformed result" };
   }
 
-  // Write unsupported capability manifest
-  writeFileSync(
-    `${MODULE_DIST}/capability.json`,
-    JSON.stringify(
-      {
-        platform,
-        arch,
-        nodeAbi: process.version,
-        secureDestination: false,
-        supported: false,
-        message: "Native secure-destination module is only available on Linux Node 22+",
-      },
-      null,
-      2
-    ) + "\n"
-  );
+  const primitiveProbe = value.primitiveProbeResults;
+  if (
+    value.supported !== primitiveProbe.supported ||
+    value.supportedPrimitives.join("\0") !== primitiveProbe.supportedPrimitives.join("\0")
+  ) {
+    return { valid: false, reason: "Capability probe returned contradictory results" };
+  }
 
-  console.error(`[build-native] Unsupported host: ${platform} ${arch} ${process.version}. Writing unsupported manifest.`);
-  process.exit(0);
-}
-
-// Supported host - attempt native build
-const cwd = process.cwd();
-const sourceDir = join(cwd, MODULE_SRC);
-const bindingGyp = join(sourceDir, "binding.gyp");
-
-if (!existsSync(bindingGyp)) {
-  // No native source yet, write unsupported manifest
-  writeFileSync(
-    `${MODULE_DIST}/capability.json`,
-    JSON.stringify(
-      {
-        platform,
-        arch,
-        nodeAbi: process.version,
-        secureDestination: false,
-        supported: false,
-        message: "Native module source not yet implemented",
-      },
-      null,
-      2
-    ) + "\n"
-  );
-  console.error("[build-native] Native module source not found. Writing unsupported manifest.");
-  process.exit(0);
-}
-
-// Clean any previous build artifacts
-const buildDir = join(sourceDir, "build");
-if (existsSync(buildDir)) {
-  rmSync(buildDir, { recursive: true, force: true });
-}
-
-// Build with node-gyp
-try {
-  console.error(`[build-native] Building native module for ${platform} ${arch} ${process.version}...`);
-  execSync("node-gyp rebuild", {
-    cwd: sourceDir,
-    stdio: "inherit",
-  });
-} catch (error) {
-  writeFileSync(
-    `${MODULE_DIST}/capability.json`,
-    JSON.stringify(
-      {
-        platform,
-        arch,
-        nodeAbi: process.version,
-        secureDestination: false,
-        supported: false,
-        message: `Native module build failed: ${error.message}`,
-      },
-      null,
-      2
-    ) + "\n"
-  );
-  console.error(`[build-native] Build failed: ${error.message}`);
-  process.exit(1);
-}
-
-// Find the built .node file
-const libBindingDir = join(sourceDir, "build", "Release");
-let builtNodePath = join(libBindingDir, MODULE_NAME);
-
-if (!existsSync(builtNodePath)) {
-  // Try other possible locations
-  const possiblePaths = [
-    join(libBindingDir, "secure_destination.node"),
-    join(sourceDir, "build", "Debug", MODULE_NAME),
-    join(sourceDir, "build", "Debug", "secure_destination.node"),
-  ];
-
-  for (const p of possiblePaths) {
-    if (existsSync(p)) {
-      builtNodePath = p;
-      break;
+  if (value.supported) {
+    const hasAllPrimitives = REQUIRED_PRIMITIVES.every((primitive) =>
+      value.supportedPrimitives.includes(primitive),
+    );
+    const hasAllFlags = REQUIRED_FLAGS.every((flag) => value.requiredFlags.includes(flag));
+    const probesPass =
+      primitiveProbe.supported &&
+      primitiveProbe.supportsOpenAt2 &&
+      primitiveProbe.supportsRenameAt2 &&
+      primitiveProbe.supportsNoReplace;
+    if (!hasAllPrimitives || !hasAllFlags || !probesPass) {
+      return { valid: false, reason: "Supported capability probe is missing a required primitive" };
     }
   }
+
+  return { valid: true, value };
 }
 
-if (!existsSync(builtNodePath)) {
-  writeFileSync(
-    `${MODULE_DIST}/capability.json`,
-    JSON.stringify(
-      {
-        platform,
-        arch,
-        nodeAbi: process.version,
-        secureDestination: false,
-        supported: false,
-        message: "Built native module not found after node-gyp rebuild",
-      },
-      null,
-      2
-    ) + "\n"
-  );
-  console.error("[build-native] Built module not found after rebuild.");
-  process.exit(1);
+function defaultBuild(context) {
+  const buildDir = join(context.sourceDir, "build");
+  rmSync(buildDir, { recursive: true, force: true });
+  execFileSync("node-gyp", ["rebuild"], {
+    cwd: context.sourceDir,
+    stdio: "inherit",
+  });
+
+  const candidates = [
+    join(context.sourceDir, "build", "Release", MODULE_NAME),
+    join(context.sourceDir, "build", "Debug", MODULE_NAME),
+  ];
+  const builtModule = candidates.find((candidate) => existsSync(candidate));
+  if (!builtModule) {
+    throw new Error("Built native module not found after node-gyp rebuild");
+  }
+
+  mkdirSync(dirname(context.modulePath), { recursive: true });
+  cpSync(builtModule, context.modulePath);
 }
 
-// Copy to dist/native/
-const destNodePath = join(MODULE_DIST, MODULE_NAME);
-cpSync(builtNodePath, destNodePath);
-
-// Verify the module
-const moduleHash = computeSha256(destNodePath);
-
-// Write capability manifest
-writeFileSync(
-  `${MODULE_DIST}/capability.json`,
-  JSON.stringify(
-    {
-      platform,
-      arch,
-      nodeAbi: process.version,
-      secureDestination: true,
-      supported: true,
-      supportedPrimitives: ["openat2", "openat", "linkat", "renameat2"],
-      requiredFlags: ["RESOLVE_BENEATH", "RESOLVE_NO_SYMLINKS"],
-      moduleSha256: moduleHash,
+async function defaultProbe(context) {
+  const imported = await import(pathToFileURL(context.modulePath).href);
+  const native = imported.default ?? imported;
+  const result = native.probeCapability();
+  return {
+    supported: result.supported,
+    supportedPrimitives: [...result.supportedPrimitives],
+    requiredFlags: result.requiredFlags.map((flag) => {
+      if (typeof flag === "string") return flag;
+      if (flag === 8) return "RESOLVE_BENEATH";
+      if (flag === 4) return "RESOLVE_NO_SYMLINKS";
+      return String(flag);
+    }),
+    primitiveProbeResults: {
+      supported: result.supported,
+      supportsOpenAt2: result.hasOpenAt2,
+      supportsRenameAt2: result.hasRenameAt2,
+      supportsNoReplace: result.supportsNoReplace,
+      supportedPrimitives: [...result.supportedPrimitives],
     },
-    null,
-    2
-  ) + "\n"
-);
+  };
+}
 
-console.error(`[build-native] Native module built and installed (sha256: ${moduleHash.substring(0, 16)}...)`);
+/**
+ * Build, probe, and attest the native module.
+ *
+ * @param {string} rootDir
+ * @param {NativeBuildHost} host
+ * @param {(context: NativeBuildContext) => void | Promise<void>} build
+ * @param {(context: NativeBuildContext) => NativeProbe | Promise<NativeProbe>} probe
+ * @returns {Promise<NativeBuildResult>}
+ */
+export async function runNativeBuild(rootDir, host, build, probe) {
+  const paths = getPaths(rootDir);
+  const context = {
+    rootDir,
+    sourceDir: paths.sourceDir,
+    modulePath: paths.modulePath,
+  };
+  mkdirSync(paths.nativeDist, { recursive: true });
+
+  const reject = (error, failed = false) => {
+    removeModule(paths.modulePath);
+    writeManifest(paths.manifestPath, unsupportedManifest(host));
+    return {
+      supported: false,
+      failed,
+      modulePath: paths.modulePath,
+      manifestPath: paths.manifestPath,
+      ...(error ? { error } : {}),
+    };
+  };
+
+  if (!isSupportedHost(host)) {
+    return reject(`Unsupported host: ${host.platform} ${host.arch} ${host.nodeVersion}`);
+  }
+
+  if (!existsSync(join(paths.sourceDir, "binding.gyp"))) {
+    return reject("Native module source not found");
+  }
+
+  try {
+    await build(context);
+  } catch (error) {
+    return reject(error instanceof Error ? error.message : String(error), true);
+  }
+
+  if (!existsSync(paths.modulePath)) {
+    return reject("Build step did not produce the packaged native module", true);
+  }
+
+  let probeResult;
+  try {
+    probeResult = validateProbe(await probe(context));
+  } catch (error) {
+    return reject(error instanceof Error ? error.message : String(error), true);
+  }
+
+  if (!probeResult.valid) {
+    return reject(probeResult.reason, true);
+  }
+
+  if (!probeResult.value.supported) {
+    // The module was copied before the probe. It is not packageable unless the
+    // complete capability contract passes, so cleanup is mandatory here.
+    return reject("Native module failed the capability probe");
+  }
+
+  const hash = moduleSha256(paths.modulePath);
+  writeManifest(paths.manifestPath, {
+    platform: host.platform,
+    arch: host.arch,
+    nodeAbi: host.nodeAbi,
+    napiVersion: host.napiVersion,
+    moduleSha256: hash,
+    supported: true,
+    supportedPrimitives: [...probeResult.value.supportedPrimitives],
+    requiredFlags: [...probeResult.value.requiredFlags],
+    primitiveProbeResults: { ...probeResult.value.primitiveProbeResults },
+  });
+
+  return {
+    supported: true,
+    failed: false,
+    modulePath: paths.modulePath,
+    manifestPath: paths.manifestPath,
+  };
+}
+
+async function runFromCommandLine() {
+  const rootDir = process.cwd();
+  const result = await runNativeBuild(
+    rootDir,
+    getHostFromProcess(),
+    defaultBuild,
+    defaultProbe,
+  );
+
+  if (result.failed) {
+    console.error(`[build-native] ${result.error}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!result.supported) {
+    console.error(`[build-native] ${result.error ?? "Native secure-destination is unavailable"}`);
+    return;
+  }
+
+  console.error(
+    `[build-native] Native module built and installed (sha256: ${moduleSha256(result.modulePath).slice(0, 16)}...)`,
+  );
+}
+
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === entrypoint) {
+  await runFromCommandLine();
+}

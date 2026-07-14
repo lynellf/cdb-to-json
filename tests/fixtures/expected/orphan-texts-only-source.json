@@ -1,0 +1,90 @@
+{
+  "schema": "ygo.card-source/1",
+  "sourceRevisionId": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "identity": {
+    "externalIds": [
+      { "namespace": "cdb-to-json", "value": "8888" }
+    ],
+    "aliasOf": null
+  },
+  "locale": "en",
+  "printed": {
+    "name": "Orphan Texts Only",
+    "cardKind": "UNKNOWN",
+    "traits": [],
+    "monster": null
+  },
+  "text": {
+    "raw": "This card has texts but no datas row.",
+    "normalized": "This card has texts but no datas row.",
+    "normalizationVersion": "text-normalization/1",
+    "spansBasis": "utf-16-code-units",
+    "offsetEncoding": "utf-16-code-units",
+    "sections": {
+      "material": null,
+      "pendulumEffect": null,
+      "monsterEffect": null,
+      "spellTrapEffect": null,
+      "flavor": null,
+      "unclassified": [
+        {
+          "text": "This card has texts but no datas row.",
+          "start": 0,
+          "end": 41,
+          "kind": "unclassified",
+          "basis": "normalized"
+        }
+      ],
+      "segmentation": "UNSPLIT"
+    },
+    "sourceSpans": [
+      {
+        "text": "This card has texts but no datas row.",
+        "start": 0,
+        "end": 41,
+        "kind": "unclassified",
+        "basis": "normalized"
+      }
+    ]
+  },
+  "simulatorSource": {
+    "ecosystem": "EDOPRO",
+    "database": {
+      "fileName": "orphan-test.cdb",
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rawRows": {
+      "datas": null,
+      "texts": null
+    },
+    "decoded": {
+      "setcodes": [],
+      "availability": [],
+      "categoryFlags": [],
+      "auxiliaryStrings": []
+    }
+  },
+  "references": {
+    "scripts": [],
+    "rulings": []
+  },
+  "coverage": {
+    "status": "SOURCE_ONLY",
+    "assumptions": [
+      "Card has texts row but no datas row; type information is unavailable from data."
+    ],
+    "unsupported": []
+  },
+  "provenance": {
+    "converter": "cdb-to-json/2.0.0",
+    "normalizationRegistry": "cdb-normalization/1",
+    "conversionOptionsHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "diagnostics": [
+    {
+      "code": "MISSING_DATA_ROW",
+      "severity": "WARNING",
+      "message": "Card ID 8888 has a texts row but no matching datas row."
+    }
+  ]
+}

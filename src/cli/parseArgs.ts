@@ -416,12 +416,27 @@ export function compileNormalizedOptions(
   let destination: ConversionDestination;
   const outputPath = opts.output as string | undefined;
 
-  if (outputPath === "-" || !outputPath) {
+  // split=database requires a directory output; reject file paths early
+  // Use extension heuristic: paths ending with common output extensions
+  // are considered file paths and are invalid with --split database
+  if (split === "database" && outputPath && !outputPath.endsWith("/")) {
+    const fileExtensions = [".json", ".jsonl", ".ndjson", ".txt", ".csv"];
+    const hasFileExtension = fileExtensions.some((ext) =>
+      outputPath.toLowerCase().endsWith(ext)
+    );
+    if (hasFileExtension) {
+      return {
+        valid: false,
+        options: null as any,
+        error: "--split database requires a directory output. Use --output <directory> instead of --output <file>.",
+      };
+    }
+    destination = { kind: "directory", path: outputPath };
+  } else if (outputPath === "-" || !outputPath) {
     destination = { kind: "stdout" };
   } else if (outputPath) {
-    // Determine if it's a file or directory based on extension or split mode
-    // Default to file for single input (Phase 2)
-    if (split === "database" || parsed.inputs.length > 1) {
+    if (parsed.inputs.length > 1) {
+      // Multiple inputs default to directory
       destination = { kind: "directory", path: outputPath };
     } else {
       destination = { kind: "file", path: outputPath };
@@ -441,10 +456,16 @@ export function compileNormalizedOptions(
     maxSnapshotBytes: maxSnapshotBytes ?? defaults.maxSnapshotBytes,
   };
 
-  // Validate limit relations
-  const limitError = validateLimitRelations(limits);
-  if (limitError) {
-    return { valid: false, options: null as any, error: limitError };
+  // Validate limit relations (pre-open: exits 2 with INVALID_LIMIT_RELATION before any discovery/open).
+  // Per INV-004 / P1-AC3: this check runs before discovery or input access.
+  const limitResult = validateLimitRelations(limits);
+  if (!limitResult.valid) {
+    // Emit the stable INVALID_LIMIT_RELATION diagnostic code and exit 2 before discovery.
+    return {
+      valid: false,
+      options: null as any,
+      error: `[${limitResult.code}] ${limitResult.message}`,
+    };
   }
 
   // Parse registry options

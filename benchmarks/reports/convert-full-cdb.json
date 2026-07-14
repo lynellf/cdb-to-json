@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "nodeVersion": "v26.5.0",
+    "platform": "linux",
+    "arch": "x64",
+    "timestamp": "2026-07-14T21:17:07.493Z"
+  },
+  "command": [
+    "/home/lynellf/.nvm/versions/node/v26.5.0/bin/node",
+    "/home/lynellf/src/cdb-to-json/benchmarks/convert-full-cdb.ts",
+    "--full-cdb",
+    "__tests__/input_dir/cards.cdb",
+    "--high-cardinality",
+    "benchmarks/fixtures/high-cardinality.cdb",
+    "--profile",
+    "raw",
+    "--format",
+    "json",
+    "--report",
+    "benchmarks/reports/convert-full-cdb.json"
+  ],
+  "results": [
+    {
+      "fixture": "__tests__/input_dir/cards.cdb",
+      "fixtureIdentity": {
+        "path": "/home/lynellf/src/cdb-to-json/__tests__/input_dir/cards.cdb",
+        "sizeBytes": 6897664,
+        "sha256": "a9f1621ee3e0143581c28d77620c6d876df59928b604f61c763e8ace7ce3554d"
+      },
+      "profile": "raw",
+      "format": "json",
+      "nodeVersion": "v26.5.0",
+      "elapsedMs": 1765,
+      "peakHeapBytes": 9855368,
+      "outputBytes": 9811470,
+      "timestamp": "2026-07-14T21:17:06.957Z"
+    },
+    {
+      "fixture": "benchmarks/fixtures/high-cardinality.cdb",
+      "fixtureIdentity": {
+        "path": "/home/lynellf/src/cdb-to-json/benchmarks/fixtures/high-cardinality.cdb",
+        "sizeBytes": 270336,
+        "sha256": "101165ee082fe613368fdf136dc0aee9d1f0f54687bac9e2c997480a0e6249ce"
+      },
+      "profile": "raw",
+      "format": "json",
+      "nodeVersion": "v26.5.0",
+      "elapsedMs": 535,
+      "peakHeapBytes": 9978032,
+      "outputBytes": 1224948,
+      "timestamp": "2026-07-14T21:17:07.493Z"
+    }
+  ]
+}

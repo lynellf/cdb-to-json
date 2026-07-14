@@ -6,17 +6,21 @@
  * Process databases sequentially. Returns one aggregate result.
  */
 
-import { iterateRawCards, type ExtraTableMetadata } from "../cdb/iterateRows.js";
-import { probeNativeCapability } from "../destinations/secureDestination.js";
+import { iterateRawCards } from "../cdb/iterateRows.js";
+import { probeNativeCapabilityAsync } from "../destinations/secureDestination.js";
+import { FileDestinationError } from "../destinations/fileDestination.js";
 import { discoverInputs } from "../discovery/discoverCdbInputs.js";
 import { DiagnosticCollector, type DiagnosticSummary } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
 import type { NormalizedConvertOptions } from "./types.js";
 import { validateLimitRelations } from "./types.js";
 import { validateOutputPlan, validateOutputCardinality } from "./outputPlan.js";
-import { RawEnvelopeBuilder } from "../profiles/rawProfile.js";
-import { serializeJson } from "../serialization/canonicalJson.js";
-import { JsonLinesWriter } from "../serialization/jsonLinesWriter.js";
+import {
+  RawEnvelopeOutputLimitError,
+  RawEnvelopeSinkError,
+  RawEnvelopeStreamWriter,
+  type RawEnvelopeStreamMetadata,
+} from "../profiles/rawEnvelopeWriter.js";
 import type { ExitCodeState } from "../cli/exitCodes.js";
 
 
@@ -25,6 +29,11 @@ import type { ExitCodeState } from "../cli/exitCodes.js";
  */
 export interface Writer {
   write(data: string): void;
+  /** Optional destination lifecycle hooks for private atomic writers. */
+  commit?(): void;
+  abort?(): void;
+  beginUnit?(unit: { inputOrdinal: number; fileName: string }): void;
+  endUnit?(): void;
 }
 
 /**
@@ -70,18 +79,143 @@ export interface ConversionResult {
   state: ConversionState;
 }
 
+interface RawStreamResult {
+  metadata: RawEnvelopeStreamMetadata;
+  cardCount: number;
+}
+
+function sameRawMetadata(
+  left: RawEnvelopeStreamMetadata,
+  right: RawEnvelopeStreamMetadata,
+): boolean {
+  return (
+    left.fileName === right.fileName &&
+    left.sha256 === right.sha256 &&
+    left.sizeBytes === right.sizeBytes &&
+    JSON.stringify(left.extraTables) === JSON.stringify(right.extraTables)
+  );
+}
+
+/**
+ * Stream a raw envelope using one pass for datas and one pass for texts.
+ * This keeps the complete database out of application memory while preserving
+ * the fixed `tables.datas` / `tables.texts` property order.
+ */
+async function streamRawDatabase(
+  input: { path: string; name: string; inputOrdinal: number },
+  options: NormalizedConvertOptions,
+  diagnostics: DiagnosticCollector,
+  writer: Writer,
+): Promise<RawStreamResult> {
+  writer.beginUnit?.({ inputOrdinal: input.inputOrdinal, fileName: input.name });
+  let metadata: RawEnvelopeStreamMetadata | null = null;
+  let streamWriter: RawEnvelopeStreamWriter | null = null;
+  let cardCount = 0;
+  let metadataMismatch: string | null = null;
+  const firstErrorCount = diagnostics.getErrors().length;
+
+  const startWriter = (candidate: RawEnvelopeStreamMetadata): void => {
+    if (metadata !== null) {
+      if (!sameRawMetadata(metadata, candidate)) {
+        metadataMismatch = "Raw source metadata changed between reader passes";
+      }
+      return;
+    }
+    metadata = candidate;
+    streamWriter = new RawEnvelopeStreamWriter({
+      format: options.format,
+      pretty: options.pretty,
+      maxOutputBytes: options.limits.maxOutputBytes,
+      write: (chunk) => writer.write(chunk),
+    });
+    streamWriter.start(candidate);
+  };
+
+  for await (const cardRow of iterateRawCards(input.path, {
+    signal: options.signal,
+    limits: options.limits,
+    diagnostics,
+    onMetadata: (meta) => {
+      startWriter({
+        fileName: input.name,
+        sha256: meta.bundleHash,
+        sizeBytes: meta.sourceSizeBytes,
+        extraTables: meta.extraTables.map((table) => ({
+          name: table.name,
+          columns: [...table.columns],
+          rowCount: table.rowCount,
+        })),
+      });
+    },
+  })) {
+    const currentWriter = streamWriter as RawEnvelopeStreamWriter | null;
+    if (!currentWriter) throw new Error("Raw reader yielded rows without provenance metadata");
+    if (cardRow.datas) currentWriter.writeDatas(cardRow.datas);
+    cardCount += 1;
+  }
+
+  if (!metadata) {
+    throw new Error("Raw reader completed without verified provenance metadata");
+  }
+  const activeWriter = streamWriter as RawEnvelopeStreamWriter | null;
+  if (!activeWriter) {
+    throw new Error("Raw reader completed without an active envelope writer");
+  }
+  if (diagnostics.getErrors().length > firstErrorCount) {
+    throw new Error("Raw reader failed before the database envelope was complete");
+  }
+  activeWriter.finishDatas();
+
+  const secondDiagnostics = new DiagnosticCollector();
+  let secondCardCount = 0;
+  for await (const cardRow of iterateRawCards(input.path, {
+    signal: options.signal,
+    limits: options.limits,
+    diagnostics: secondDiagnostics,
+    onMetadata: (meta) => {
+      const candidate: RawEnvelopeStreamMetadata = {
+        fileName: input.name,
+        sha256: meta.bundleHash,
+        sizeBytes: meta.sourceSizeBytes,
+        extraTables: meta.extraTables.map((table) => ({
+          name: table.name,
+          columns: [...table.columns],
+          rowCount: table.rowCount,
+        })),
+      };
+      if (!sameRawMetadata(metadata!, candidate)) {
+        metadataMismatch = "Raw source metadata changed between reader passes";
+      }
+    },
+  })) {
+    if (cardRow.texts) activeWriter.writeTexts(cardRow.texts);
+    secondCardCount += 1;
+  }
+
+  if (metadataMismatch) throw new Error(metadataMismatch);
+  if (secondDiagnostics.getErrors().length > 0) {
+    diagnostics.merge(secondDiagnostics);
+    throw new Error("Raw reader failed during the texts pass");
+  }
+  if (secondCardCount !== cardCount) {
+    throw new Error("Raw source row count changed between reader passes");
+  }
+  activeWriter.finish();
+  writer.endUnit?.();
+  return { metadata, cardCount };
+}
+
 /**
  * Main conversion function.
  * Accepts normalized options and output writers.
+ * Writers are required and must be provided by the caller.
+ * The CLI adapter edge supplies process.stdout/stderr at the entrypoint.
  */
 export async function convert(
   options: NormalizedConvertOptions,
   writers: {
     data: Writer;
     diagnostics: Writer;
-  } = {
-    data: { write: (s: string) => process.stdout.write(s) },
-    diagnostics: { write: (s: string) => process.stderr.write(s) },
   }
 ): Promise<ConversionResult> {
   let state: ConversionState = "PLANNING";
@@ -153,7 +287,7 @@ export async function convert(
     // File and directory destinations require native secure-destination capability.
     // This check runs before discoverInputs() and before any SQLite access.
     if (options.destination.kind === "file" || options.destination.kind === "directory") {
-      const capability = probeNativeCapability();
+      const capability = await probeNativeCapabilityAsync();
       if (!capability.supported) {
         topCollector.error(
           DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM,
@@ -270,6 +404,7 @@ export async function convert(
               { details: { existingPath: options.destination.path } }
             );
             const summary = topCollector.getSummary();
+            renderTopDiagnostics(topCollector, options.diagnosticsMode, writers.diagnostics);
             return {
               sources: [],
               cardCount: 0,
@@ -300,6 +435,7 @@ export async function convert(
               { details: { existingPath: options.destination.path } }
             );
             const summary = topCollector.getSummary();
+            renderTopDiagnostics(topCollector, options.diagnosticsMode, writers.diagnostics);
             return {
               sources: [],
               cardCount: 0,
@@ -330,6 +466,7 @@ export async function convert(
               `Failed to check output directory: ${err instanceof Error ? err.message : String(err)}`
             );
             const summary = topCollector.getSummary();
+            renderTopDiagnostics(topCollector, options.diagnosticsMode, writers.diagnostics);
             return {
               sources: [],
               cardCount: 0,
@@ -357,11 +494,12 @@ export async function convert(
       }
     }
 
-    // Validate limit relations
-    const limitError = validateLimitRelations(options.limits);
-    if (limitError) {
-      topCollector.error(DiagnosticCode.INVALID_LIMIT_RELATION, limitError);
+    // Validate limit relations (pre-open: INVALID_LIMIT_RELATION before any discovery/open).
+    const limitResult = validateLimitRelations(options.limits);
+    if (!limitResult.valid) {
+      topCollector.error(DiagnosticCode.INVALID_LIMIT_RELATION, limitResult.message);
       const summary = topCollector.getSummary();
+      renderTopDiagnostics(topCollector, options.diagnosticsMode, writers.diagnostics);
       return {
         sources: [],
         cardCount: 0,
@@ -456,52 +594,46 @@ export async function convert(
     // Phase 4: Process databases sequentially
     state = "READING";
 
-    for (const input of discovered) {
+    for (const [inputOrdinal, input] of discovered.entries()) {
       const dbCollector = new DiagnosticCollector();
       let dbSha256 = "";
       let dbCardCount = 0;
-      let dbSourceSize = 0;
-      let dbExtraTables: ExtraTableMetadata[] = [];
       // Track whether we obtained verified provenance metadata.
       // If false (reader error, preflight failure), we must NOT emit a
       // fabricated envelope with empty sha256/sizeBytes.
       let metadataObtained = false;
 
-      // Build the raw envelope for this database
-      const envelopeBuilder = new RawEnvelopeBuilder({
-        fileName: input.name,
-        sha256: dbSha256,
-        sizeBytes: dbSourceSize,
-        extraTables: dbExtraTables,
-      });
-
       try {
-        // Read rows via the async iterator, collecting metadata via callback.
-        // The callback fires once after preflight checks, before row iteration.
-        for await (const cardRow of iterateRawCards(input.path, {
-          signal: options.signal,
-          limits: options.limits,
-          diagnostics: dbCollector,
-          onMetadata: (meta) => {
-            dbSha256 = meta.bundleHash;
-            dbSourceSize = meta.sourceSizeBytes;
-            dbExtraTables = [...meta.extraTables];
-            metadataObtained = true;
-          },
-        })) {
-          envelopeBuilder.addCard(cardRow);
-          dbCardCount++;
-        }
-
-        // Update envelope metadata after iteration (callback fires before first yield)
-        envelopeBuilder.updateMetadata({
-          sha256: dbSha256,
-          sizeBytes: dbSourceSize,
-          extraTables: dbExtraTables,
-        });
+        const streamed = await streamRawDatabase(
+          { path: input.path, name: input.name, inputOrdinal },
+          options,
+          dbCollector,
+          writers.data,
+        );
+        dbSha256 = streamed.metadata.sha256;
+        dbCardCount = streamed.cardCount;
+        metadataObtained = true;
       } catch (error) {
         if (options.signal?.aborted) {
           dbCollector.error(DiagnosticCode.CANCELLED, "Conversion cancelled", {
+            details: { database: input.path },
+          });
+        } else if (error instanceof FileDestinationError) {
+          // Propagate destination errors with their original code and message.
+          // These are pre-open checks (directory exists, etc.) surfaced from
+          // beginUnit(), not database read failures.
+          const code = error.code as DiagnosticCode;
+          dbCollector.error(
+            code,
+            error.message,
+            { details: { database: input.path } },
+          );
+        } else if (error instanceof RawEnvelopeOutputLimitError) {
+          dbCollector.error(DiagnosticCode.RESOURCE_LIMIT_EXCEEDED, error.message, {
+            details: { limitCode: "MAX_OUTPUT_BYTES", maxOutputBytes: options.limits.maxOutputBytes },
+          });
+        } else if (error instanceof RawEnvelopeSinkError) {
+          dbCollector.error(DiagnosticCode.OUTPUT_WRITE_FAILED, error.message, {
             details: { database: input.path },
           });
         } else {
@@ -552,39 +684,8 @@ export async function convert(
         continue;
       }
 
-      // Build the raw envelope
-      const envelope = envelopeBuilder.build();
       totalCardCount += dbCardCount;
       completedInputCount++;
-
-      // Serialize and write
-      try {
-        if (options.format === "jsonl") {
-          // JSONL: one envelope per line
-          const jsonlWriter = new JsonLinesWriter({
-            write: (s: string) => writers.data.write(s),
-            end: () => {},
-            on: () => ({}) as any,
-          } as any);
-          jsonlWriter.write(envelope);
-          jsonlWriter.close();
-        } else {
-          // JSON: write as a single object
-          const jsonOutput = serializeJson(envelope, {
-            pretty: options.pretty,
-          });
-          writers.data.write(jsonOutput + "\n");
-        }
-      } catch (error) {
-        dbCollector.error(
-          DiagnosticCode.OUTPUT_WRITE_FAILED,
-          `Failed to write output: ${error instanceof Error ? error.message : String(error)}`
-        );
-        failedInputCount++;
-        topCollector.merge(dbCollector);
-        if (!options.continueOnError) break;
-        continue;
-      }
 
       // Produce diagnostic output
       renderDbDiagnostics(dbCollector, options.diagnosticsMode, writers.diagnostics);
@@ -649,6 +750,35 @@ export async function convert(
     exitCodeState,
     state,
   };
+}
+
+/**
+ * Render top-level diagnostics on the diagnostics writer.
+ * Used for pre-open structural failures (directory exists, unsafe filesystem, etc.).
+ */
+function renderTopDiagnostics(
+  collector: DiagnosticCollector,
+  mode: string,
+  writer: Writer
+): void {
+  const all = collector.getAll();
+  if (mode === "none" || all.length === 0) return;
+
+  for (const d of all) {
+    if (mode === "json") {
+      writer.write(JSON.stringify(d) + "\n");
+    } else if (mode === "jsonl") {
+      writer.write(JSON.stringify(d) + "\n");
+    } else if (mode === "text") {
+      const prefix =
+        d.severity === "ERROR"
+          ? "[ERROR]"
+          : d.severity === "WARNING"
+            ? "[WARNING]"
+            : "[INFO]";
+      writer.write(`${prefix} ${d.code}: ${d.message}\n`);
+    }
+  }
 }
 
 /**

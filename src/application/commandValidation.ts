@@ -78,10 +78,10 @@ export function buildLimits(options: {
     }
   }
 
-  // Validate limit relations
-  const relationError = validateLimitRelations(limits);
-  if (relationError) {
-    return { limits, error: relationError };
+  // Validate limit relations (pre-open: INVALID_LIMIT_RELATION before discovery/open).
+  const relationResult = validateLimitRelations(limits);
+  if (!relationResult.valid) {
+    return { limits, error: `[${relationResult.code}] ${relationResult.message}` };
   }
 
   return { limits };

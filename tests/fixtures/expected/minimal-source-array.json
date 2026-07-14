@@ -1,0 +1,91 @@
+[
+  {
+    "schema": "ygo.card-source/1",
+    "sourceRevisionId": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "identity": {
+      "externalIds": [
+        { "namespace": "cdb-to-json", "value": "1234" }
+      ],
+      "aliasOf": null
+    },
+    "locale": "en",
+    "printed": {
+      "name": "Test Card",
+      "cardKind": "MONSTER",
+      "traits": ["NORMAL"],
+      "monster": {
+        "monsterType": null,
+        "attribute": null,
+        "level": 4,
+        "rank": null,
+        "linkRating": null,
+        "attack": 1000,
+        "defense": 1000,
+        "pendulum": null
+      }
+    },
+    "text": {
+      "raw": "A test card.",
+      "normalized": "A test card.",
+      "normalizationVersion": "text-normalization/1",
+      "spansBasis": "utf-16-code-units",
+      "offsetEncoding": "utf-16-code-units",
+      "sections": {
+        "material": null,
+        "pendulumEffect": null,
+        "monsterEffect": null,
+        "spellTrapEffect": null,
+        "flavor": {
+          "text": "A test card.",
+          "start": 0,
+          "end": 12,
+          "kind": "flavor",
+          "basis": "normalized"
+        },
+        "unclassified": [],
+        "segmentation": "FRAME_RULE"
+      },
+      "sourceSpans": [
+        {
+          "text": "A test card.",
+          "start": 0,
+          "end": 12,
+          "kind": "flavor",
+          "basis": "normalized"
+        }
+      ]
+    },
+    "simulatorSource": {
+      "ecosystem": "EDOPRO",
+      "database": {
+        "fileName": "test.cdb",
+        "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "rawRows": {
+        "datas": null,
+        "texts": null
+      },
+      "decoded": {
+        "setcodes": [],
+        "availability": [],
+        "categoryFlags": [],
+        "auxiliaryStrings": []
+      }
+    },
+    "references": {
+      "scripts": [],
+      "rulings": []
+    },
+    "coverage": {
+      "status": "SOURCE_ONLY",
+      "assumptions": [],
+      "unsupported": []
+    },
+    "provenance": {
+      "converter": "cdb-to-json/2.0.0",
+      "normalizationRegistry": "cdb-normalization/1",
+      "conversionOptionsHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "diagnostics": []
+  }
+]

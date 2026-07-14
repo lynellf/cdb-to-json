@@ -112,7 +112,7 @@ The refactor MUST make the repository useful for:
 3. The `card` profile contains no unexplained `type`, `race`, `level`, `setcode`, `ot`, or `category` integers at its primary domain surface.
 4. Unknown bits and unsupported values are preserved and reported rather than discarded or guessed.
 5. Identical inputs, options, registry versions, and tool versions produce byte-identical output.
-6. JSON, JSON Lines, per-database, and stdout workflows are supported without loading the complete corpus into memory.
+6. JSON, JSON Lines, per-database, and stdout workflows are supported without loading the complete corpus into memory; raw envelope `tables.datas`/`tables.texts` arrays and normalized aggregate arrays are serialized incrementally, with no complete per-database or corpus collector.
 7. The source profile can be consumed directly by the first YGO-DSL translation stage.
 8. Existing library consumers have a documented migration path and a compatibility wrapper.
 9. Generated CDB integration fixtures cover all major card frames and malformed-row behavior.
@@ -269,7 +269,7 @@ Input discovery MUST be deterministic:
 | `--diagnostics` | `text`, `json`, `jsonl`, `none` | `text` |
 | `--continue-on-error` | process later databases after a database-level failure | `false` |
 | `--max-staging-bytes` | aggregate private staging/reservation budget | `4 GiB` |
-| `--max-snapshot-bytes` | maximum source main/WAL/SHM snapshot and materialization bytes | `4 GiB` |
+| `--max-snapshot-bytes` | aggregate private source main/WAL/SHM snapshot and materialization bytes, including generated private SQLite files and temporary siblings | `4 GiB` |
 
 ### 7.4 Stdout and stderr
 
@@ -286,7 +286,7 @@ Input discovery MUST be deterministic:
 - File writes use a temporary sibling file followed by an atomic rename where supported.
 - A failed conversion MUST NOT leave a truncated destination file.
 - Multiple logical outputs require an output directory unless `--split none --merge` produces one stream.
-- File and directory destinations are atomic per logical output under a finite aggregate staging budget. Stdout is intentionally non-atomic streaming: it is allowed only for one logical output, and late failures may leave prior bytes already emitted.
+- File and directory destinations are atomic per logical output under a finite aggregate staging budget. A no-continue conversion producing multiple finals additionally uses a descriptor-relative commit-set journal: all reservations are held, finals publish in deterministic order, and a between-final failure removes only this run's no-force finals or restores force backups byte-for-byte. Rollback failure retains explicit recovery state and returns exit 6. `--continue-on-error` unmerged `split=database` is the explicit per-database atomic exception. `maxStagingBytes` applies only to private file/directory staging, snapshots, locks, commit journals/backups, and merge state; stdout is intentionally non-atomic streaming, is allowed only for one logical output, and is charged only to `maxOutputBytes`, so late failures may leave prior bytes already emitted.
 - Aggregate card/source JSON arrays use named schemas `cdb.card-array/2` and `ygo.card-source-array/1`; item schemas remain `cdb.card/2` and `ygo.card-source/1`. Raw JSON is one `cdb.raw/1` envelope. The `schema` command exposes item and aggregate schemas distinctly.
 
 ### 7.6 Exit codes
@@ -297,12 +297,12 @@ Input discovery MUST be deterministic:
 | `1` | Unexpected internal failure |
 | `2` | Invalid command or option combination |
 | `3` | No usable CDB input found |
-| `4` | Input schema or strict validation failure |
+| `4` | Input/schema/strict/resource/integer validation failure |
 | `5` | Card-ID collision under `--on-conflict error` |
-| `6` | Output conflict or write failure |
+| `6` | Output conflict, write failure, unsafe destination, or cancellation |
 | `7` | Partial conversion under `--continue-on-error` |
 
-Warnings alone do not change a successful exit code unless `--strict` promotes them.
+Warnings alone do not change a successful exit code unless `--strict` promotes them. Terminal selection is an explicit predicate matrix, not numeric ordering: option errors first (`2`); no usable input only when no input access started and no input/strict/resource/collision/output/cancellation/internal failure exists (`3`); output failure/cancellation overrides pending input, collision, or partial state (`6`); input/schema/strict/resource/integer failure overrides collision when output is clean (`4`); collision overrides partial success (`5`); mixed continued success/failure is (`7`); unexpected internal failure is (`1`); otherwise success is (`0`).
 
 ---
 
@@ -319,7 +319,7 @@ texts(id, name, desc, str1 ... str16)
 
 The converter MUST query these tables explicitly. It MUST NOT dynamically execute `SELECT *` against every arbitrary user-defined table.
 
-The supported raw contract is the fixed standard `datas`/`texts` column set listed above. Extra tables and columns MAY be recorded as metadata (name, columns, and row count), but their cell values are not part of `cdb.raw/1` and MUST NOT be implied to be losslessly preserved. A future schema version may explicitly add safely quoted extraction for them. This supported-columns boundary is the meaning of “lossless raw” throughout this specification.
+The supported raw contract is the fixed standard `datas`/`texts` column set listed above. Extra tables and columns MAY be recorded as metadata (name, columns, and row count), but their cell values are not part of `cdb.raw/1` and MUST NOT be implied to be losslessly preserved. Extra-table row counts MUST be bounded: use a safely quoted, value-free probe capped at `maxRowsPerTable + 1` (compute the sentinel as a `BigInt` sum, without numeric coercion); record an exact count only below the cap, and emit `RESOURCE_LIMIT_EXCEEDED` with `MAX_EXTRA_TABLE_ROWS_EXCEEDED` on the sentinel without selecting any extra-table cell. An unbounded extra-table `COUNT(*)` scan is forbidden. A future schema version may explicitly add safely quoted extraction for them. This supported-columns boundary is the meaning of “lossless raw” throughout this specification.
 
 ### 8.2 Database safety and lifecycle
 
@@ -328,8 +328,8 @@ The supported raw contract is the fixed standard `datas`/`texts` column set list
 - Use fixed SQL statements or safely quoted known identifiers.
 - Disable extension loading.
 - Require and validate SQLite `UTF-8` database encoding before text-byte preflight; non-UTF-8 databases fail with a stable input diagnostic rather than being measured as UTF-8.
-- Acquire a stable private snapshot of the main database and any present `-wal`/`-shm` members before opening. Read the snapshot read-only and verify its member identities/hashes before publication; a stable WAL bundle is supported, while an unstable bundle fails with `SOURCE_MUTATED_DURING_READ`.
-- Apply resource limits to rows, text cells, each logical output, aggregate staging, and merge-private storage when configured.
+- Acquire a stable private snapshot of the main database and any present `-wal`/`-shm` members before opening. Hold a no-symlink descriptor for the input parent, traverse components descriptor-relatively, open each member with `O_NOFOLLOW|O_RDONLY|O_CLOEXEC` (or an equivalent safe primitive), fstat-verify it against the lstat observation, and copy/hash from the held descriptor; a path copy after lstat is forbidden. A deterministic member swap must never read the replacement target. Read the snapshot read-only and verify its member identities/hashes before publication; a stable WAL bundle is supported, while an unstable bundle fails with `SOURCE_MUTATED_DURING_READ`.
+- Apply resource limits to rows in required and extra tables, text cells, each logical output, aggregate staging, merge-private storage, and every snapshot/materialization copy/write chunk when configured. `maxSnapshotBytes` is a dedicated aggregate counter for copied source members, materialized main, generated private SQLite files, and snapshot temp siblings; the pre-copy size sum is only an early check.
 - Never execute SQL stored inside a CDB value.
 
 ### 8.3 Join behavior
@@ -385,6 +385,7 @@ Purpose: lossless extraction, debugging, compatibility, and future re-normalizat
 Rules:
 
 - Preserve source integers and strings exactly as returned by SQLite.
+- Serialize `tables.datas` and `tables.texts` incrementally in canonical signed-int64 ID/ordinal order; do not materialize a complete database envelope before writing.
 - Preserve `str1` through `str16`, including empty strings and `null` values.
 - Do not decode, rename, or omit a supported standard source column; every supported SQLite INTEGER is represented as a signed-int64 decimal string and every supported TEXT/NULL value is retained exactly.
 - The `extraTables` metadata is intentionally not a cell-value dump; values outside the supported standard column set are out of contract, not silently claimed as lossless.
@@ -550,7 +551,7 @@ It contains the `card` profile’s normalized printed facts plus exact provenanc
 }
 ```
 
-`SOURCE_ONLY` explicitly means that no executable DSL semantics have been authored or reviewed yet.
+`SOURCE_ONLY` explicitly means that no executable DSL semantics have been authored or reviewed yet. The source schema has no `identity.databaseSha256` field; `simulatorSource.database.sha256` is the sole physical database hash path used by the source profile and is excluded, with `sourceRevisionId`, from `canonicalDataProjection`.
 
 ---
 
@@ -693,8 +694,14 @@ type TextSlice = {
   text: string;
   start: number;
   end: number;
-  basis: string;
+  kind: "material" | "pendulumEffect" | "monsterEffect" | "spellTrapEffect" | "flavor" | "unclassified";
+  basis: "normalized";
 };
+
+// Serialized source documents use `text.sections` for the named nullable/array
+// sections above and `text.sourceSpans` for their complete ordered flattened list.
+// `text` must equal `text.normalized.slice(start, end)` in UTF-16 code units;
+// `begin`, root `text.spans`, and spans without copied text are invalid.
 ```
 
 ### 11.1 Permitted rules
@@ -755,6 +762,7 @@ Requirements:
 
 - `jsonl` streams one record at a time;
 - a JSON array writer streams delimiters and records without collecting all cards;
+- the raw profile streams `tables.datas` and `tables.texts` from fixed table iterators (or a bounded two-pass equivalent) and never accumulates a complete per-database row array;
 - per-card output writes one record at a time;
 - source-file SHA-256 is computed through a file stream;
 - databases are processed sequentially in v2 unless measured evidence justifies worker concurrency;

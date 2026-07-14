@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
  */
 export function createMinimalCdb(
   cards: Array<{
-    id: number;
+    id: number | bigint;
     name: string;
     desc: string;
     type?: number;
@@ -28,22 +28,22 @@ export function createMinimalCdb(
     ot?: number;
     alias?: number;
     category?: number;
-    str1?: string;
-    str2?: string;
-    str3?: string;
-    str4?: string;
-    str5?: string;
-    str6?: string;
-    str7?: string;
-    str8?: string;
-    str9?: string;
-    str10?: string;
-    str11?: string;
-    str12?: string;
-    str13?: string;
-    str14?: string;
-    str15?: string;
-    str16?: string;
+    str1?: string | null;
+    str2?: string | null;
+    str3?: string | null;
+    str4?: string | null;
+    str5?: string | null;
+    str6?: string | null;
+    str7?: string | null;
+    str8?: string | null;
+    str9?: string | null;
+    str10?: string | null;
+    str11?: string | null;
+    str12?: string | null;
+    str13?: string | null;
+    str14?: string | null;
+    str15?: string | null;
+    str16?: string | null;
   }>
 ): string {
   const tmpDir = mkdtempSync(join(tmpdir(), "cdb-fixture-"));
@@ -103,7 +103,7 @@ export function createMinimalCdb(
   for (const card of cards) {
     insertDatas.run(
       card.id,
-      card.type ?? 0,
+      card.ot ?? 0,
       card.alias ?? 0,
       card.setcode ?? 0,
       card.type ?? 2, // Default to Effect Monster
@@ -156,6 +156,10 @@ export function createOrphanedDatasCdb(
     level?: number;
     race?: number;
     attribute?: number;
+    ot?: number | null;
+    alias?: number | null;
+    setcode?: number | null;
+    category?: number | null;
   }>,
   textsRows: Array<{
     id: number;
@@ -219,16 +223,16 @@ export function createOrphanedDatasCdb(
   for (const row of datasRows) {
     insertDatas.run(
       row.id,
-      0, // ot
-      0, // alias
-      0, // setcode
+      row.ot !== undefined ? row.ot : 0,
+      row.alias !== undefined ? row.alias : 0,
+      row.setcode !== undefined ? row.setcode : 0,
       row.type ?? 2,
       row.atk ?? 0,
       row.def ?? 0,
       row.level ?? 0,
       row.race ?? 0,
       row.attribute ?? 0,
-      0 // category
+      row.category !== undefined ? row.category : 0
     );
   }
 
@@ -238,7 +242,7 @@ export function createOrphanedDatasCdb(
       row.name,
       row.desc,
       null, null, null, null, null, null, null, null,
-      null, null, null, null, null, null
+      null, null, null, null, null, null, null, null
     );
   }
 

@@ -1,0 +1,30 @@
+{
+  "$schema": "cdb.raw/1",
+  "schema": "cdb.raw/1",
+  "integerEncoding": "signed-int64-decimal",
+  "source": {
+    "fileName": "orphan-test.cdb",
+    "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sizeBytes": 8192,
+    "converter": "cdb-to-json/2.0.0"
+  },
+  "tables": {
+    "datas": [
+      {
+        "id": "9999",
+        "ot": "1",
+        "alias": "0",
+        "setcode": "0",
+        "type": "2",
+        "atk": "1000",
+        "def": "1000",
+        "level": "4",
+        "race": "16",
+        "attribute": "1",
+        "category": "0"
+      }
+    ],
+    "texts": []
+  },
+  "extraTables": []
+}

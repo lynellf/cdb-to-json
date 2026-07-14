@@ -2,29 +2,411 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "ygo.card-source/1",
   "title": "YGO Card Source Profile",
-  "description": "Provenance-rich source document for the YGO-DSL translation pipeline.",
+  "description": "Provenance-rich source document for the YGO-DSL translation pipeline. Each document represents one card with exact raw text, conservative normalization, and source-provenance metadata. No executable semantics are inferred from card text or simulator flags.",
   "type": "object",
-  "required": ["schema", "sourceRevisionId", "identity", "locale", "printed", "text", "simulatorSource", "references", "coverage", "provenance", "diagnostics"],
+  "required": [
+    "schema",
+    "sourceRevisionId",
+    "identity",
+    "locale",
+    "printed",
+    "text",
+    "simulatorSource",
+    "references",
+    "coverage",
+    "provenance",
+    "diagnostics"
+  ],
   "properties": {
-    "schema": { "const": "ygo.card-source/1" },
-    "sourceRevisionId": { "type": "string" },
-    "identity": { "type": "object" },
-    "locale": { "type": "string" },
-    "printed": { "type": "object" },
-    "text": { "type": "object" },
-    "simulatorSource": { "type": "object" },
-    "references": { "type": "object" },
+    "schema": {
+      "type": "string",
+      "const": "ygo.card-source/1"
+    },
+    "sourceRevisionId": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Deterministic provenance ID computed from canonical source facts, lineage, and shared semantic options. Changes when source content, registry versions/hashes, locale, or semantic options change."
+    },
+    "identity": {
+      "type": "object",
+      "required": ["externalIds", "aliasOf"],
+      "properties": {
+        "externalIds": {
+          "type": "array",
+          "description": "External identifiers for this card record",
+          "items": {
+            "type": "object",
+            "required": ["namespace", "value"],
+            "properties": {
+              "namespace": {
+                "type": "string",
+                "description": "Namespace of the external identifier (e.g., 'cdb-to-json', source namespace)"
+              },
+              "value": {
+                "type": "string",
+                "description": "The identifier value within its namespace"
+              }
+            }
+          }
+        },
+        "aliasOf": {
+          "type": ["string", "null"],
+          "description": "ID of the card this is an alias of, or null if this is a canonical record"
+        }
+      }
+    },
+    "locale": {
+      "type": "string",
+      "description": "Normalized locale identifier (ISO 15924 + underscore + ISO 3166-1 alpha-2, or 'und' for undefined)"
+    },
+    "printed": {
+      "type": "object",
+      "description": "Printed card facts extracted from the CDB",
+      "properties": {
+        "name": {
+          "type": ["string", "null"],
+          "description": "Card name from texts.name, null for datas-only orphan"
+        },
+        "cardKind": {
+          "type": "string",
+          "description": "Card kind: MONSTER, SPELL, TRAP, UNKNOWN"
+        },
+        "traits": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Card type traits derived from type flags"
+        },
+        "monster": {
+          "type": ["object", "null"],
+          "description": "Monster-specific printed facts, null if cardKind is not MONSTER",
+          "properties": {
+            "monsterType": {
+              "type": ["string", "null"],
+              "description": "Singleton monster type or null"
+            },
+            "attribute": {
+              "type": ["string", "null"],
+              "description": "Singleton attribute or null"
+            },
+            "level": {
+              "type": ["number", "null"],
+              "description": "Level (primary progression) or null"
+            },
+            "rank": {
+              "type": ["number", "null"],
+              "description": "Rank (Xyz) or null"
+            },
+            "linkRating": {
+              "type": ["number", "null"],
+              "description": "Link rating or null"
+            },
+            "attack": {
+              "type": ["number", "null"],
+              "description": "Attack value or null"
+            },
+            "defense": {
+              "type": ["number", "null"],
+              "description": "Defense/definiton value or null"
+            },
+            "pendulum": {
+              "type": ["object", "null"],
+              "description": "Pendulum scales if applicable",
+              "properties": {
+                "leftScale": { "type": "number" },
+                "rightScale": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "required": [
+        "raw",
+        "normalized",
+        "normalizationVersion",
+        "spansBasis",
+        "offsetEncoding",
+        "sections",
+        "sourceSpans"
+      ],
+      "properties": {
+        "raw": {
+          "type": ["string", "null"],
+          "description": "Exact source text as stored in SQLite, including original line endings"
+        },
+        "normalized": {
+          "type": ["string", "null"],
+          "description": "Normalized text: CRLF and CR converted to LF, NFC Unicode normalization applied"
+        },
+        "normalizationVersion": {
+          "type": "string",
+          "const": "text-normalization/1"
+        },
+        "spansBasis": {
+          "type": "string",
+          "const": "utf-16-code-units",
+          "description": "Span offsets are UTF-16 code-unit offsets into the normalized text"
+        },
+        "offsetEncoding": {
+          "type": "string",
+          "const": "utf-16-code-units",
+          "description": "All span offsets are UTF-16 code-unit offsets"
+        },
+        "sections": {
+          "type": "object",
+          "required": ["material", "pendulumEffect", "monsterEffect", "spellTrapEffect", "flavor", "unclassified", "segmentation"],
+          "properties": {
+            "material": {
+              "type": ["object", "null"],
+              "description": "Material line for Extra Deck/Ritual monsters"
+            },
+            "pendulumEffect": {
+              "type": ["object", "null"],
+              "description": "Pendulum effect text"
+            },
+            "monsterEffect": {
+              "type": ["object", "null"],
+              "description": "Monster effect text"
+            },
+            "spellTrapEffect": {
+              "type": ["object", "null"],
+              "description": "Spell/Trap effect text"
+            },
+            "flavor": {
+              "type": ["object", "null"],
+              "description": "Flavor text for Normal monsters"
+            },
+            "unclassified": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["text", "start", "end", "kind", "basis"],
+                "properties": {
+                  "text": { "type": "string" },
+                  "start": { "type": "integer", "minimum": 0 },
+                  "end": { "type": "integer", "minimum": 0 },
+                  "kind": { "type": "string" },
+                  "basis": { "type": "string", "const": "normalized" }
+                }
+              },
+              "description": "Text segments that could not be classified into a named section"
+            },
+            "segmentation": {
+              "type": "string",
+              "enum": ["EXACT_MARKERS", "FRAME_RULE", "PARTIAL", "UNSPLIT"],
+              "description": "Segmentation confidence level"
+            }
+          }
+        },
+        "sourceSpans": {
+          "type": "array",
+          "description": "Complete ordered list of all text segments with UTF-16 offsets into normalized text",
+          "items": {
+            "type": "object",
+            "required": ["text", "start", "end", "kind", "basis"],
+            "properties": {
+              "text": { "type": "string" },
+              "start": { "type": "integer", "minimum": 0 },
+              "end": { "type": "integer", "minimum": 0 },
+              "kind": { "type": "string" },
+              "basis": { "type": "string", "const": "normalized" }
+            }
+          }
+        }
+      }
+    },
+    "simulatorSource": {
+      "type": "object",
+      "required": ["ecosystem", "database", "rawRows", "decoded"],
+      "properties": {
+        "ecosystem": {
+          "type": "string",
+          "const": "EDOPRO",
+          "description": "EDOPRO simulator ecosystem identifier"
+        },
+        "database": {
+          "type": "object",
+          "required": ["fileName", "sha256"],
+          "properties": {
+            "fileName": {
+              "type": "string",
+              "description": "Original database filename"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "description": "SHA-256 of the physical snapshot bundle (main + WAL + SHM tuple)"
+            }
+          }
+        },
+        "rawRows": {
+          "type": "object",
+          "description": "Raw row data from the CDB",
+          "properties": {
+            "datas": {
+              "type": ["object", "null"],
+              "description": "Raw datas row with column name -> decimal string value mapping"
+            },
+            "texts": {
+              "type": ["object", "null"],
+              "description": "Raw texts row with column name -> string/null value mapping"
+            }
+          }
+        },
+        "decoded": {
+          "type": "object",
+          "properties": {
+            "setcodes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": { "type": "number" },
+                  "name": { "type": "string" }
+                }
+              },
+              "description": "Decoded setcode values"
+            },
+            "availability": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": { "type": "string" }
+                }
+              },
+              "description": "Decoded availability/ot flags"
+            },
+            "categoryFlags": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": { "type": "string" }
+                }
+              },
+              "description": "Decoded category flags"
+            },
+            "auxiliaryStrings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["index", "value"],
+                "properties": {
+                  "index": { "type": "number" },
+                  "value": { "type": ["string", "null"] }
+                }
+              },
+              "description": "Decoded auxiliary strings (str1-str16)"
+            }
+          }
+        }
+      }
+    },
+    "references": {
+      "type": "object",
+      "required": ["scripts", "rulings"],
+      "properties": {
+        "scripts": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Script references (empty unless a future declared source is supplied)"
+        },
+        "rulings": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "Ruling references (empty unless a future declared source is supplied)"
+        }
+      }
+    },
     "coverage": {
       "type": "object",
       "required": ["status"],
       "properties": {
-        "status": { "const": "SOURCE_ONLY" }
+        "status": {
+          "type": "string",
+          "const": "SOURCE_ONLY",
+          "description": "Coverage status: only source facts are available, no scripts/rulings"
+        },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Documented assumptions about this record"
+        },
+        "unsupported": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Unsupported features or missing source data"
+        }
       }
     },
-    "provenance": { "type": "object" },
+    "provenance": {
+      "type": "object",
+      "required": ["converter", "normalizationRegistry", "conversionOptionsHash"],
+      "properties": {
+        "converter": {
+          "type": "string",
+          "description": "Converter version identifier"
+        },
+        "normalizationRegistry": {
+          "type": "string",
+          "description": "Normalization registry version identifier"
+        },
+        "conversionOptionsHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "Hash of the shared semantic conversion options"
+        }
+      }
+    },
     "diagnostics": {
       "type": "array",
-      "items": { "type": "object" }
+      "description": "Processing diagnostics for this card",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["INFO", "WARNING", "ERROR"] },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "TextSlice": {
+      "type": "object",
+      "required": ["text", "start", "end", "kind", "basis"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Copied text content extracted from text.normalized using start/end offsets"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Inclusive start offset in UTF-16 code units from the beginning of text.normalized"
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exclusive end offset in UTF-16 code units from the beginning of text.normalized"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Semantic classification of this text segment"
+        },
+        "basis": {
+          "type": "string",
+          "const": "normalized",
+          "description": "Basis for the offsets: always 'normalized' (offsets are into text.normalized)"
+        }
+      }
     }
   }
 }

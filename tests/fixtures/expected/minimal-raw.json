@@ -1,0 +1,71 @@
+{
+  "$schema": "cdb.raw/1",
+  "schema": "cdb.raw/1",
+  "integerEncoding": "signed-int64-decimal",
+  "source": {
+    "fileName": "test.cdb",
+    "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sizeBytes": 8192,
+    "converter": "cdb-to-json/2.0.0"
+  },
+  "tables": {
+    "datas": [
+      {
+        "id": "1234",
+        "ot": "1",
+        "alias": "0",
+        "setcode": "0",
+        "type": "2",
+        "atk": "1000",
+        "def": "1000",
+        "level": "4",
+        "race": "16",
+        "attribute": "1",
+        "category": "0"
+      },
+      {
+        "id": "-9223372036854775808",
+        "ot": null,
+        "alias": null,
+        "setcode": null,
+        "type": null,
+        "atk": null,
+        "def": null,
+        "level": null,
+        "race": null,
+        "attribute": null,
+        "category": null
+      }
+    ],
+    "texts": [
+      {
+        "id": "1234",
+        "name": "Test Card",
+        "desc": "A test card.",
+        "str1": null,
+        "str2": null,
+        "str3": null,
+        "str4": null,
+        "str5": null,
+        "str6": null,
+        "str7": null,
+        "str8": null,
+        "str9": null,
+        "str10": null,
+        "str11": null,
+        "str12": null,
+        "str13": null,
+        "str14": null,
+        "str15": null,
+        "str16": null
+      }
+    ]
+  },
+  "extraTables": [
+    {
+      "name": "test_meta",
+      "columns": ["key", "value"],
+      "rowCount": 1
+    }
+  ]
+}

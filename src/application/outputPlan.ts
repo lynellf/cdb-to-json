@@ -96,6 +96,15 @@ function validateRawPlan(
     };
   }
 
+  // split=database requires a directory output (even for single input)
+  // because the semantic is "one file per database" which implies a directory structure
+  if (options.split === "database" && options.destination.kind === "file") {
+    return {
+      valid: false,
+      error: "--split database requires a directory output. Use --output <directory> instead of --output <file>.",
+    };
+  }
+
   // Pretty + JSONL is invalid
   if (options.pretty && options.format === "jsonl") {
     return {

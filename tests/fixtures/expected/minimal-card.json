@@ -1,0 +1,42 @@
+{
+  "schema": "cdb.card/2",
+  "id": "1234",
+  "name": "Test Card",
+  "locale": "en-US",
+  "cardKind": "normal",
+  "traits": [],
+  "typeLine": {
+    "monsterType": null,
+    "monsterTypes": [],
+    "abilities": [],
+    "display": null
+  },
+  "monster": null,
+  "spell": null,
+  "trap": null,
+  "text": {
+    "raw": null,
+    "material": null,
+    "pendulumEffect": null,
+    "monsterEffect": null,
+    "spellTrapEffect": null,
+    "flavor": null,
+    "segmentation": "{\"spans\":[],\"version\":\"text-normalization/1\",\"basis\":\"raw\"}"
+  },
+  "identity": {
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "test.cdb",
+    "cardId": "1234"
+  },
+  "archetypes": {},
+  "simulator": {},
+  "source": {
+    "kind": "EDOPRO_CDB",
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "test.cdb",
+    "rowId": "1234",
+    "converter": "cdb-to-json/2.0.0",
+    "normalizationRegistry": ""
+  },
+  "diagnostics": []
+}

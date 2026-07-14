@@ -12,6 +12,16 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, existsSync, statSync } from "node:fs";
 import { DiagnosticCollector } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
+import {
+  admitMaterializationQuota,
+  MaterializationQuotaError,
+  type MaterializationQuotaOptions,
+  type MaterializationQuotaReservation,
+} from "./materializationQuota.js";
+
+export interface MaterializeSnapshotOptions extends MaterializationQuotaOptions {
+  diagnostics?: DiagnosticCollector;
+}
 
 /**
  * Materialize a snapshot bundle into a private main-only database.
@@ -30,8 +40,38 @@ export function materializeSnapshot(
   _walPath: string | null,
   _shmPath: string | null,
   stagingRoot: string | null,
-  diagnostics?: DiagnosticCollector
+  diagnosticsOrOptions?: DiagnosticCollector | MaterializeSnapshotOptions,
+  options: MaterializeSnapshotOptions = {},
 ): string {
+  const diagnostics = diagnosticsOrOptions instanceof DiagnosticCollector
+    ? diagnosticsOrOptions
+    : diagnosticsOrOptions?.diagnostics;
+  const quotaOptions = diagnosticsOrOptions instanceof DiagnosticCollector
+    ? options
+    : diagnosticsOrOptions ?? {};
+  let quotaReservation: MaterializationQuotaReservation;
+  try {
+    // This admission is deliberately before mkdir, writable SQLite open, and
+    // VACUUM INTO. The private write boundary cannot outrun the reservation.
+    quotaReservation = admitMaterializationQuota(
+      mainPath,
+      _walPath,
+      _shmPath,
+      quotaOptions,
+    );
+  } catch (error) {
+    if (error instanceof MaterializationQuotaError) {
+      diagnostics?.error(
+        error.code === "RESOURCE_LIMIT_EXCEEDED"
+          ? DiagnosticCode.RESOURCE_LIMIT_EXCEEDED
+          : DiagnosticCode.CDB_OPEN_FAILED,
+        error.message,
+        { details: { limitCode: error.code } },
+      );
+    }
+    throw error;
+  }
+
   // Create a materialization staging directory
   const materializeDir = join(
     stagingRoot ?? dirname(snapshotDir),
@@ -97,6 +137,8 @@ export function materializeSnapshot(
   } catch (error) {
     cleanupMaterializeDir(materializeDir);
     throw error;
+  } finally {
+    quotaReservation.release();
   }
 }
 

@@ -8,3 +8,13 @@ export { JsonArrayWriter } from "./jsonArrayWriter.js";
 export type { JsonArrayWriterOptions } from "./jsonArrayWriter.js";
 export { JsonLinesWriter } from "./jsonLinesWriter.js";
 export type { JsonLinesWriterOptions } from "./jsonLinesWriter.js";
+export {
+  TestOutputSink,
+  CallbackOutputWriter,
+  StdoutOutputWriter,
+} from "./outputWriter.js";
+export type {
+  OutputWriter,
+  WriterState,
+  OutputWriterOptions,
+} from "./outputWriter.js";

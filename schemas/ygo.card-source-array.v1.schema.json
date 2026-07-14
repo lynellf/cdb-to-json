@@ -4,5 +4,34 @@
   "title": "YGO Card Source Document Array",
   "description": "Array of provenance-rich source documents for YGO-DSL translation.",
   "type": "array",
-  "items": { "$ref": "ygo.card-source/1" }
+  "items": {
+    "$id": "ygo.card-source/1",
+    "type": "object",
+    "required": [
+      "schema",
+      "sourceRevisionId",
+      "identity",
+      "locale",
+      "printed",
+      "text",
+      "simulatorSource",
+      "references",
+      "coverage",
+      "provenance",
+      "diagnostics"
+    ],
+    "properties": {
+      "schema": { "const": "ygo.card-source/1" },
+      "sourceRevisionId": { "type": "string" },
+      "identity": { "type": "object" },
+      "locale": { "type": "string" },
+      "printed": { "type": "object" },
+      "text": { "type": "object" },
+      "simulatorSource": { "type": "object" },
+      "references": { "type": "object" },
+      "coverage": { "type": "object" },
+      "provenance": { "type": "object" },
+      "diagnostics": { "type": "array" }
+    }
+  }
 }

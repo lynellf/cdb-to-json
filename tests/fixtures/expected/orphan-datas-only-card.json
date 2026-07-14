@@ -1,0 +1,28 @@
+{
+  "schema": "cdb.card/2",
+  "id": "9999",
+  "name": null,
+  "locale": "en-US",
+  "traits": [],
+  "identity": {
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "orphan-test.cdb",
+    "cardId": "9999"
+  },
+  "archetypes": {},
+  "simulator": {},
+  "source": {
+    "kind": "EDOPRO_CDB",
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "orphan-test.cdb",
+    "rowId": "9999",
+    "converter": "cdb-to-json/2.0.0",
+    "normalizationRegistry": ""
+  },
+  "diagnostics": [
+    {
+      "code": "MISSING_TEXT_ROW",
+      "message": "Card ID 9999 has a datas row but no matching texts row."
+    }
+  ]
+}

@@ -146,8 +146,17 @@ describe("Large Join", () => {
         CREATE TABLE texts (id INTEGER PRIMARY KEY, name TEXT, desc TEXT, str1 TEXT, str2 TEXT, str3 TEXT, str4 TEXT, str5 TEXT, str6 TEXT, str7 TEXT, str8 TEXT, str9 TEXT, str10 TEXT, str11 TEXT, str12 TEXT, str13 TEXT, str14 TEXT, str15 TEXT, str16 TEXT);
       `);
 
-      // Test various integer values
-      const testValues = [
+      // Test various integer values.
+      // Use prepared statements with BigInt parameters to avoid precision loss
+      // from JavaScript Number→SQLite string interpolation for int64 values.
+      const insertDatas = db.prepare(
+        "INSERT INTO datas (id, ot, alias, setcode, type, atk, def, level, race, attribute, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      );
+      const insertTexts = db.prepare(
+        "INSERT INTO texts (id, name, desc, str1, str2, str3, str4, str5, str6, str7, str8, str9, str10, str11, str12, str13, str14, str15, str16) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      );
+
+      const testValues: Array<number | bigint> = [
         0, 1, -1, 127, -128, 32767, -32768, 2147483647, -2147483648,
         9223372036854775807n, // max int64
         -9223372036854775808n, // min int64
@@ -155,9 +164,8 @@ describe("Large Join", () => {
 
       for (let i = 0; i < testValues.length; i++) {
         const val = testValues[i];
-        const typeVal = typeof val === "bigint" ? Number(val) : val;
-        db.exec(`INSERT INTO datas VALUES (${i + 1}, 0, 0, ${typeVal}, 2, 1000, 1000, 4, 0, 0, 0);`);
-        db.exec(`INSERT INTO texts VALUES (${i + 1}, 'Card ${i + 1}', 'Desc', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);`);
+        insertDatas.run(i + 1, 0, 0, val, 2, 1000, 1000, 4, 0, 0, 0);
+        insertTexts.run(i + 1, `Card ${i + 1}`, "Desc", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
       }
       db.close();
 

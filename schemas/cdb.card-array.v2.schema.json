@@ -4,5 +4,57 @@
   "title": "CDB Card Profile Array",
   "description": "Array of consumer-friendly card records from CDB databases.",
   "type": "array",
-  "items": { "$ref": "cdb.card/2" }
+  "items": {
+    "$id": "cdb.card/2",
+    "type": "object",
+    "required": ["schema", "id", "name", "source"],
+    "properties": {
+      "schema": { "const": "cdb.card/2" },
+      "id": { "type": "string", "pattern": "^-?[0-9]+$" },
+      "name": { "type": ["string", "null"] },
+      "locale": { "type": "string" },
+      "cardKind": { "type": "string" },
+      "traits": { "type": "array", "items": { "type": "string" } },
+      "typeLine": {
+        "type": "object",
+        "properties": {
+          "monsterType": { "type": ["string", "null"] },
+          "monsterTypes": { "type": "array", "items": { "type": "string" } },
+          "abilities": { "type": "array", "items": { "type": "string" } },
+          "display": { "type": ["string", "null"] }
+        }
+      },
+      "monster": { "type": ["object", "null"] },
+      "spell": { "type": ["object", "null"] },
+      "trap": { "type": ["object", "null"] },
+      "text": {
+        "type": "object",
+        "properties": {
+          "raw": { "type": ["string", "null"] },
+          "material": { "type": ["string", "null"] },
+          "pendulumEffect": { "type": ["string", "null"] },
+          "monsterEffect": { "type": ["string", "null"] },
+          "spellTrapEffect": { "type": ["string", "null"] },
+          "flavor": { "type": ["string", "null"] },
+          "segmentation": { "type": "string" }
+        }
+      },
+      "identity": { "type": "object" },
+      "archetypes": { "type": "object" },
+      "simulator": { "type": "object" },
+      "source": {
+        "type": "object",
+        "required": ["kind", "databaseSha256", "databaseFileName", "rowId", "converter"],
+        "properties": {
+          "kind": { "const": "EDOPRO_CDB" },
+          "databaseSha256": { "type": "string" },
+          "databaseFileName": { "type": "string" },
+          "rowId": { "type": "string" },
+          "converter": { "const": "cdb-to-json/2.0.0" },
+          "normalizationRegistry": { "type": "string" }
+        }
+      },
+      "diagnostics": { "type": "array", "items": { "type": "object" } }
+    }
+  }
 }

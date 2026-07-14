@@ -1,0 +1,11 @@
+{
+  "$schema": "https://cdb-to-json.example.com/schemas/registry-source.v1.schema.json",
+  "description": "Placeholder registry source for P1 fixture validation. Phase 3 normalization cannot proceed until a maintainer supplies the authoritative revision.",
+  "requiredFields": {
+    "url": "The authoritative source URL for the registry data",
+    "revision": "The immutable git commit hash or equivalent revision identifier",
+    "checksum": "SHA-256 of the canonical source content"
+  },
+  "status": "PENDING_MAINTAINER_INPUT",
+  "note": "This placeholder enables fixture test coverage for registry metadata handling. Replace with actual registry source before Phase 3 normalization gates."
+}

@@ -1,0 +1,92 @@
+{
+  "schema": "cdb-to-json/p1-p2-gate-evidence/1",
+  "target": "P3",
+  "contractRevision": 12,
+  "status": "PASS",
+  "recordedAt": "2026-07-14T19:56:19.276Z",
+  "testFiles": [
+    "tests/cli/exitCodes.test.ts",
+    "tests/cli/limitRelations.test.ts",
+    "tests/cli/nativeCapabilityCleanup.test.ts",
+    "tests/reader/discovery.test.ts",
+    "tests/reader/joinDiagnostics.test.ts",
+    "tests/reader/largeJoin.test.ts",
+    "tests/reader/resourceLimits.test.ts",
+    "tests/reader/extraTableLimits.test.ts",
+    "tests/reader/textByteFidelity.test.ts",
+    "tests/reader/walMaterialization.test.ts",
+    "tests/reader/physicalSnapshotProvenance.test.ts",
+    "tests/reader/sourceMemberSwap.test.ts",
+    "tests/reader/sourceParentSwap.test.ts",
+    "tests/reader/sourceSameInodeMutation.test.ts",
+    "tests/reader/materializationQuota.test.ts",
+    "tests/reader/stagingSnapshotBudget.test.ts",
+    "tests/api/iterateRawCards.test.ts",
+    "tests/api/iterateRawCards.types.test.ts",
+    "tests/compatibility/legacy.test.ts",
+    "tests/compatibility/legacy-output.test.ts",
+    "tests/compatibility/legacyNames.test.ts",
+    "tests/compatibility/legacyOutputSecurity.test.ts"
+  ],
+  "commands": [
+    {
+      "command": "npm run build:native && npm run build && npm run package:check",
+      "exitStatus": 0,
+      "durationMs": 7601,
+      "outputTail": "yWriter.js\n  npm notice 6.6kB dist/serialization/jsonArrayWriter.js.map\n  npm notice 3.3kB dist/serialization/jsonLinesWriter.d.ts\n  npm notice 1.2kB dist/serialization/jsonLinesWriter.d.ts.map\n  npm notice 7.5kB dist/serialization/jsonLinesWriter.js\n  npm notice 4.4kB dist/serialization/jsonLinesWriter.js.map\n  npm notice 5.3kB dist/serialization/outputWriter.d.ts\n  npm notice 2.8kB dist/serialization/outputWriter.d.ts.map\n  npm notice 12.4kB dist/serialization/outputWriter.js\n  npm notice 8.9kB dist/serialization/outputWriter.js.map\n  npm notice 568B dist/text/index.d.ts\n  npm notice 403B dist/text/index.d.ts.map\n  npm notice 501B dist/text/index.js\n  npm notice 353B dist/text/index.js.map\n  npm notice 1.9kB dist/text/normalizeText.d.ts\n  npm notice 570B dist/text/normalizeText.d.ts.map\n  npm notice 2.9kB dist/text/normalizeText.js\n  npm notice 1.5kB dist/text/normalizeText.js.map\n  npm notice 3.3kB dist/text/segmentCardText.d.ts\n  npm notice 1.3kB dist/text/segmentCardText.d.ts.map\n  npm notice 12.4kB dist/text/segmentCardText.js\n  npm notice 9.2kB dist/text/segmentCardText.js.map\n  npm notice 1.4kB dist/text/types.d.ts\n  npm notice 468B dist/text/types.d.ts.map\n  npm notice 380B dist/text/types.js\n  npm notice 309B dist/text/types.js.map\n  npm notice 3.3kB package.json\n  npm notice 2.3kB schemas/cdb.card-array.v2.schema.json\n  npm notice 2.1kB schemas/cdb.card.v2.schema.json\n  npm notice 5.8kB schemas/cdb.raw.v1.schema.json\n  npm notice 1.0kB schemas/ygo.card-source-array.v1.schema.json\n  npm notice 13.9kB schemas/ygo.card-source.v1.schema.json\n  npm notice Tarball Details\n  npm notice name: cdb-to-json\n  npm notice version: 2.0.0\n  npm notice filename: cdb-to-json-2.0.0.tgz\n  npm notice package size: 294.1 kB\n  npm notice unpacked size: 1.3 MB\n  npm notice shasum: ed2e86b06a676711ec1a796edb41161d24eca20b\n  npm notice integrity: sha512-MQhy6V+2dV0Ns[...]Wx+0uazlvAQSw==\n  npm notice total files: 331\n  npm notice\n  cdb-to-json-2.0.0.tgz\n\n[OK] Package check passed\n"
+    },
+    {
+      "command": "npm run test:fixtures",
+      "exitStatus": 0,
+      "durationMs": 14289,
+      "outputTail": "> golden record validation > validates null fields are preserved 895ms\n ✓ tests/fixtures/cases.test.ts (30 tests) 13739ms\n   ✓ Integer ID vectors > canonical ID -2 encodes as signed-int64 decimal string 1327ms\n   ✓ Integer ID vectors > canonical ID 0 encodes as signed-int64 decimal string 1196ms\n   ✓ Integer ID vectors > canonical ID 2 encodes as signed-int64 decimal string 1077ms\n   ✓ Integer ID vectors > canonical ID 10 encodes as signed-int64 decimal string 1095ms\n   ✓ Integer ID vectors > canonical ID -9223372036854775808 encodes as signed-int64 decimal string 894ms\n   ✓ Integer ID vectors > canonical ID 9223372036854775807 encodes as signed-int64 decimal string 1189ms\n   ✓ Orphan shape vectors > datas-only orphan has null texts fields 562ms\n   ✓ Orphan shape vectors > texts-only orphan has null datas fields 615ms\n   ✓ Orphan shape vectors > null numeric datas fields are preserved as null 794ms\n   ✓ Storage class vectors (invalid → INVALID_INTEGER_VALUE) > TEXT id is invalid storage class 1044ms\n   ✓ Storage class vectors (invalid → INVALID_INTEGER_VALUE) > REAL type field is invalid storage class 654ms\n   ✓ Storage class vectors (invalid → INVALID_INTEGER_VALUE) > BLOB type field is invalid storage class 923ms\n   ✓ Conflict-safe nullable/array vectors > nullable ot is preserved as null without inventing a value 547ms\n   ✓ Conflict-safe nullable/array vectors > auxiliary strings allow null without inventing a value 336ms\n   ✓ Text fidelity vectors > CRLF line endings are preserved byte-for-byte 330ms\n   ✓ Text fidelity vectors > astral-plane Unicode (non-BMP) is preserved byte-for-byte 348ms\n   ✓ Text fidelity vectors > empty strings are preserved as empty strings, not null 380ms\n   ✓ Text fidelity vectors > Unicode combining characters are preserved without normalization 423ms\n\n Test Files  3 passed (3)\n      Tests  43 passed (43)\n   Start at  19:49:01\n   Duration  13.99s (transform 88ms, setup 0ms, collect 146ms, tests 23.86s, environment 0ms, prepare 150ms)\n\n"
+    },
+    {
+      "command": "npm run test:unit",
+      "exitStatus": 0,
+      "durationMs": 548,
+      "outputTail": "\n> cdb-to-json@2.0.0 test:unit\n> vitest run tests/unit\n\n\n RUN  v2.1.9 /home/lynellf/src/cdb-to-json\n\n ✓ tests/unit/diagnosticsPolicy.test.ts (13 tests) 4ms\n\n Test Files  1 passed (1)\n      Tests  13 passed (13)\n   Start at  19:49:15\n   Duration  224ms (transform 40ms, setup 0ms, collect 28ms, tests 4ms, environment 0ms, prepare 40ms)\n\n"
+    },
+    {
+      "command": "npm run test:reader",
+      "exitStatus": 0,
+      "durationMs": 54242,
+      "outputTail": "\n ✓ tests/reader/resourceLimits.test.ts (2 tests) 4132ms\n   ✓ required-table resource limits > rejects a datas table over maxRowsPerTable before yielding cards 2209ms\n   ✓ required-table resource limits > rejects a texts table over maxRowsPerTable before yielding cards 1923ms\n ✓ tests/reader/extraTableLimits.test.ts (2 tests) 4327ms\n   ✓ bounded extra-table metadata > stops at maxRowsPerTable + 1 without publishing cards or selecting cells 2542ms\n   ✓ bounded extra-table metadata > records an exact count for an extra table below the sentinel 1784ms\n ✓ tests/reader/stagingSnapshotBudget.test.ts (6 tests) 48517ms\n   ✓ Staging Snapshot Budget > maxSnapshotBytes enforcement > rejects databases exceeding maxSnapshotBytes 782ms\n   ✓ Staging Snapshot Budget > maxSnapshotBytes enforcement > accepts databases within maxSnapshotBytes 1611ms\n   ✓ Staging Snapshot Budget > WAL handling with budget > includes WAL in snapshot budget calculation 479ms\n   ✓ Staging Snapshot Budget > cleanup on various paths > cleans up staging on success 1837ms\n   ✓ Staging Snapshot Budget > cleanup on various paths > cleans up staging on error 1093ms\n   ✓ Staging Snapshot Budget > cleanup on various paths > cleans up staging on cancellation 42712ms\n ✓ tests/reader/largeJoin.test.ts (6 tests) 53632ms\n   ✓ Large Join > streaming iterator behavior > streams cards without materializing all rows 44316ms\n   ✓ Large Join > streaming iterator behavior > yields cards incrementally 4309ms\n   ✓ Large Join > row limits > enforces maxRowsPerTable limit 1771ms\n   ✓ Large Join > signed-64 integer values > preserves signed-64 integer values as decimal strings 1954ms\n   ✓ Large Join > signed-64 integer values > handles null integer values 754ms\n   ✓ Large Join > extra table metadata > handles databases with extra tables 527ms\n\n Test Files  13 passed (13)\n      Tests  60 passed (60)\n   Start at  19:49:16\n   Duration  53.94s (transform 296ms, setup 0ms, collect 753ms, tests 147.46s, environment 2ms, prepare 588ms)\n\n"
+    },
+    {
+      "command": "npm run test:api",
+      "exitStatus": 0,
+      "durationMs": 58899,
+      "outputTail": "\n> cdb-to-json@2.0.0 test:api\n> vitest run tests/api/iterateRawCards.test.ts tests/api/iterateRawCards.types.test.ts\n\n\n RUN  v2.1.9 /home/lynellf/src/cdb-to-json\n\n ✓ tests/api/iterateRawCards.types.test.ts (6 tests) 3ms\n ✓ tests/api/iterateRawCards.test.ts (11 tests) 58289ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > returns an async iterable iterator 516ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > yields card rows 807ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > produces complete pairs with both datas and texts 641ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > includes dataOrdinal and textOrdinal 751ms\n   ✓ iterateRawCards runtime behavior > AbortSignal checks > checks signal before starting and yields nothing 610ms\n   ✓ iterateRawCards runtime behavior > AbortSignal checks > aborted signal before iteration prevents card yield 861ms\n   ✓ iterateRawCards runtime behavior > scheduler checkpoint > yields incrementally without materializing all rows at once 50162ms\n   ✓ iterateRawCards runtime behavior > return() cleanup > return() closes handles and cleans up 1191ms\n   ✓ iterateRawCards runtime behavior > return() cleanup > for-of loop cleanup via break 893ms\n   ✓ iterateRawCards runtime behavior > abort rejection > returns done when cancelled mid-iteration with CANCELLED diagnostic 861ms\n   ✓ iterateRawCards runtime behavior > convert() reuse > can be called multiple times sequentially 994ms\n\n Test Files  2 passed (2)\n      Tests  17 passed (17)\n   Start at  19:50:10\n   Duration  58.59s (transform 117ms, setup 0ms, collect 139ms, tests 58.29s, environment 0ms, prepare 88ms)\n\n"
+    },
+    {
+      "command": "npm run test:compat",
+      "exitStatus": 0,
+      "durationMs": 7305,
+      "outputTail": "\n> cdb-to-json@2.0.0 test:compat\n> vitest run tests/compatibility/legacy.test.ts tests/compatibility/legacy-output.test.ts tests/compatibility/legacyNames.test.ts tests/compatibility/legacyOutputSecurity.test.ts\n\n\n RUN  v2.1.9 /home/lynellf/src/cdb-to-json\n\n ✓ tests/compatibility/legacyNames.test.ts (10 tests) 10ms\n ✓ tests/compatibility/legacyOutputSecurity.test.ts (5 tests) 361ms\n ✓ tests/compatibility/legacy.test.ts (4 tests) 3225ms\n   ✓ Legacy bridge > returns expected table shape for valid input 921ms\n   ✓ Legacy bridge > returns void when emit is false without outputDir 1149ms\n   ✓ Legacy bridge > writes to output directory when outputDir is specified 1053ms\n ✓ tests/compatibility/legacy-output.test.ts (8 tests) 6596ms\n   ✓ Legacy Output > successive writes > performs two successive writes 2014ms\n   ✓ Legacy Output > emit-false behavior > writes files when emit is false with outputDir 822ms\n   ✓ Legacy Output > emit-false behavior > writes nothing when emit is false without outputDir 541ms\n   ✓ Legacy Output > emit-false behavior > returns tables when emit is true without outputDir 430ms\n   ✓ Legacy Output > output directory creation > creates output directory if it does not exist 551ms\n   ✓ Legacy Output > output directory creation > handles nested output directory creation 492ms\n   ✓ Legacy Output > basename collision > ignores files in ignore list 880ms\n   ✓ Legacy Output > atomic write behavior > does not leave truncated file on failure 865ms\n\n Test Files  4 passed (4)\n      Tests  27 passed (27)\n   Start at  19:51:09\n   Duration  7.00s (transform 323ms, setup 0ms, collect 383ms, tests 10.19s, environment 1ms, prepare 192ms)\n\n"
+    },
+    {
+      "command": "npm run test:cli",
+      "exitStatus": 0,
+      "durationMs": 13721,
+      "outputTail": "inality streaming > matches an independently collected reference under a 256 MB heap 2564ms\n ✓ tests/cli/storageClassRejection.test.ts (4 tests) 7102ms\n   ✓ Storage class rejection (P1-AC3) > CLI rejection with exit 4 > TEXT id column is rejected with exit 4 2108ms\n   ✓ Storage class rejection (P1-AC3) > CLI rejection with exit 4 > REAL integer column is rejected with exit 4 2217ms\n   ✓ Storage class rejection (P1-AC3) > CLI rejection with exit 4 > BLOB integer column is rejected with exit 4 1469ms\n   ✓ Storage class rejection (P1-AC3) > Rejection precedes output > no valid JSON envelope is emitted when storage class is invalid 1307ms\n ✓ tests/cli/processSmoke.test.ts (26 tests) 12440ms\n   ✓ Inspect Command > inspect a CDB file produces machine output 1689ms\n   ✓ Convert Command > converts one CDB file to raw JSON on stdout 2655ms\n   ✓ Convert Command > converts one CDB file to raw JSONL on stdout 2739ms\n   ✓ Convert Command > enforces max-output-bytes before writing a raw envelope 1505ms\n   ✓ Convert Command > --force with existing file is handled correctly 340ms\n   ✓ Stdout/Stderr Separation > data goes to stdout, diagnostics to stderr 2337ms\n ✓ tests/cli/inspectValidateSchema.test.ts (26 tests) 12744ms\n   ✓ inspectInputs > deterministic output > produces deterministic machine-readable output 3104ms\n   ✓ inspectInputs > deterministic output > includes verified physical provenance 1928ms\n   ✓ inspectInputs > deterministic output > includes table metadata 1466ms\n   ✓ inspectInputs > deterministic output > includes row counts 1601ms\n   ✓ inspectInputs > deterministic output > includes extra tables metadata 2032ms\n   ✓ inspectInputs > deterministic output > reports exit code state correctly 1234ms\n   ✓ executeInspect command > produces machine output to stdout 1064ms\n\n Test Files  19 passed (19)\n      Tests  390 passed | 1 skipped (391)\n   Start at  19:51:16\n   Duration  13.40s (transform 728ms, setup 0ms, collect 1.22s, tests 58.30s, environment 3ms, prepare 930ms)\n\n"
+    },
+    {
+      "command": "npm run test:conformance",
+      "exitStatus": 0,
+      "durationMs": 42068,
+      "outputTail": "decimal encoding 2106ms\n   ✓ raw profile JSON output conformance > raw JSON output has all required fields 1646ms\n   ✓ raw profile JSON output conformance > raw JSON output has tables.datas and tables.texts 1682ms\n   ✓ raw profile JSON output conformance > raw JSON output preserves integer IDs as decimal strings 2124ms\n   ✓ raw profile JSON output conformance > raw JSON output nullable numeric fields use schema-nullable contract 1746ms\n   ✓ raw profile JSON output conformance > raw JSON output preserves empty strings in text columns 1690ms\n   ✓ raw profile JSON output conformance > raw JSON output preserves Unicode text content 1774ms\n   ✓ raw profile JSON output conformance > raw JSON output source has required fields 1620ms\n   ✓ raw profile JSON output conformance > raw JSON output extraTables is array of metadata only 1552ms\n   ✓ raw profile JSON output conformance > raw JSON output is deterministic (canonical property order) 3189ms\n   ✓ raw profile JSONL output conformance > raw JSONL output is valid: one complete cdb.raw/1 envelope per line 1680ms\n   ✓ raw profile JSONL output conformance > raw JSONL envelope has schema identifier cdb.raw/1 1682ms\n   ✓ raw profile JSONL output conformance > raw JSONL envelope has signed-int64-decimal encoding 1628ms\n   ✓ raw profile JSONL output conformance > raw JSONL emits complete envelope (not one row per line) 1623ms\n   ✓ raw JSON and JSONL semantic equivalence > JSON and JSONL produce identical logical data content 4109ms\n   ✓ raw profile integer boundary conformance > negative integer IDs are preserved as decimal strings 1744ms\n   ✓ raw profile integer boundary conformance > all IDs are decimal strings (not coerced to numbers) 2352ms\n   ✓ raw profile integer boundary conformance > numeric fields are decimal strings not numbers 3113ms\n\n Test Files  4 passed (4)\n      Tests  123 passed (123)\n   Start at  19:51:30\n   Duration  41.75s (transform 211ms, setup 0ms, collect 482ms, tests 41.58s, environment 1ms, prepare 229ms)\n\n"
+    },
+    {
+      "command": "npm test",
+      "exitStatus": 0,
+      "durationMs": 247232,
+      "outputTail": "ds runtime behavior > async iterator signature > yields card rows 1405ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > produces complete pairs with both datas and texts 1463ms\n   ✓ iterateRawCards runtime behavior > async iterator signature > includes dataOrdinal and textOrdinal 2181ms\n   ✓ iterateRawCards runtime behavior > AbortSignal checks > checks signal before starting and yields nothing 1452ms\n   ✓ iterateRawCards runtime behavior > AbortSignal checks > aborted signal before iteration prevents card yield 1471ms\n   ✓ iterateRawCards runtime behavior > scheduler checkpoint > yields incrementally without materializing all rows at once 90150ms\n   ✓ iterateRawCards runtime behavior > return() cleanup > return() closes handles and cleans up 1990ms\n   ✓ iterateRawCards runtime behavior > return() cleanup > for-of loop cleanup via break 2194ms\n   ✓ iterateRawCards runtime behavior > abort rejection > returns done when cancelled mid-iteration with CANCELLED diagnostic 2272ms\n   ✓ iterateRawCards runtime behavior > convert() reuse > can be called multiple times sequentially 2677ms\n ✓ tests/streaming/memoryBound.test.ts (15 tests) 219153ms\n   ✓ iterateRawCards streaming behavior (P5-AC4) > processes records via async iteration 3220ms\n   ✓ iterateRawCards streaming behavior (P5-AC4) > does not buffer all records before yielding 2509ms\n   ✓ iterateRawCards streaming behavior (P5-AC4) > yields to scheduler within 256-row windows 116684ms\n   ✓ streaming + writer integration (P5-AC4) > processes database without accumulating all records 14577ms\n   ✓ streaming + writer integration (P5-AC4) > handles high-cardinality database streaming 61013ms\n   ✓ streaming + writer integration (P5-AC4) > verifies JSONL line count matches writer record count 21080ms\n\n Test Files  75 passed (75)\n      Tests  1461 passed | 1 skipped (1462)\n   Start at  19:52:15\n   Duration  243.22s (transform 1.37s, setup 0ms, collect 2.87s, tests 802.12s, environment 11ms, prepare 3.17s)\n\n"
+    }
+  ],
+  "buildIdentity": {
+    "packageVersion": "2.0.0",
+    "nodeVersion": "v26.5.0",
+    "capabilityManifestSha256": "6dd4550d00a152b514b84e0c4b35ccbeb7f2bc855a7cf1dd5eca19055f2d1f4b"
+  }
+}

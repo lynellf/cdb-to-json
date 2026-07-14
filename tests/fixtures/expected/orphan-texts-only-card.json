@@ -1,0 +1,28 @@
+{
+  "schema": "cdb.card/2",
+  "id": "8888",
+  "name": "Orphan Texts Only",
+  "locale": "en-US",
+  "traits": [],
+  "identity": {
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "orphan-test.cdb",
+    "cardId": "8888"
+  },
+  "archetypes": {},
+  "simulator": {},
+  "source": {
+    "kind": "EDOPRO_CDB",
+    "databaseSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "databaseFileName": "orphan-test.cdb",
+    "rowId": "8888",
+    "converter": "cdb-to-json/2.0.0",
+    "normalizationRegistry": ""
+  },
+  "diagnostics": [
+    {
+      "code": "MISSING_DATA_ROW",
+      "message": "Card ID 8888 has a texts row but no matching datas row."
+    }
+  ]
+}

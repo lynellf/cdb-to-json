@@ -3,6 +3,8 @@
  *
  * A simple writer abstraction for stdout output.
  * Stdout is non-atomic by contract — a late error may leave earlier bytes.
+ *
+ * The stream must be provided by the caller; no process-global default is used.
  */
 
 import { Writable } from "node:stream";
@@ -16,10 +18,9 @@ export interface Writer {
 
 /**
  * Create a stdout destination writer.
+ * @param stream - The writable stream to write to (required, no default)
  */
-export function createStdoutDestination(
-  stream: Writable = process.stdout
-): Writer {
+export function createStdoutDestination(stream: Writable): Writer {
   return {
     write(data: string): void {
       stream.write(data);

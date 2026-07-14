@@ -39,19 +39,45 @@ export function getDefaultLimits(): LimitsV1 {
 }
 
 /**
- * Validate limit relations.
+ * Result of a limit-relation validation.
+ * INVALID_LIMIT_RELATION is emitted before discovery or input access.
+ */
+export type LimitRelationResult =
+  | { valid: true }
+  | {
+      valid: false;
+      /** Stable diagnostic code used before discovery/open. */
+      code: "INVALID_LIMIT_RELATION";
+      message: string;
+    };
+
+/**
+ * Validate limit relations (pre-open, before discovery/input access).
+ *
  * maxSpoolBytes must not exceed maxStagingBytes.
  * maxSnapshotBytes must not exceed maxStagingBytes.
- * Returns null if valid, or an error message if invalid.
+ *
+ * Returns { valid: true } if limits are consistent.
+ * Returns { valid: false, code: "INVALID_LIMIT_RELATION", message } otherwise.
+ * The caller uses the code to emit the stable diagnostic and exit 2 before
+ * any discovery or SQLite open occurs (pre-open contract gate).
  */
-export function validateLimitRelations(limits: LimitsV1): string | null {
+export function validateLimitRelations(limits: LimitsV1): LimitRelationResult {
   if (limits.maxSpoolBytes > limits.maxStagingBytes) {
-    return `maxSpoolBytes (${limits.maxSpoolBytes}) exceeds maxStagingBytes (${limits.maxStagingBytes})`;
+    return {
+      valid: false,
+      code: "INVALID_LIMIT_RELATION",
+      message: `maxSpoolBytes (${limits.maxSpoolBytes}) exceeds maxStagingBytes (${limits.maxStagingBytes})`,
+    };
   }
   if (limits.maxSnapshotBytes > limits.maxStagingBytes) {
-    return `maxSnapshotBytes (${limits.maxSnapshotBytes}) exceeds maxStagingBytes (${limits.maxStagingBytes})`;
+    return {
+      valid: false,
+      code: "INVALID_LIMIT_RELATION",
+      message: `maxSnapshotBytes (${limits.maxSnapshotBytes}) exceeds maxStagingBytes (${limits.maxStagingBytes})`,
+    };
   }
-  return null;
+  return { valid: true };
 }
 
 /**

@@ -64,6 +64,10 @@ export interface SetcodeDecodeResult {
  * - bits 0-15: first archetype
  * - bits 16-31: second archetype
  * - bits 32-47: third archetype (rarely used)
+ *
+ * Note: JavaScript bitwise shifts are modulo 32, so shifting by 32 or more
+ * bits wraps around. Since setcode values are typically 32-bit integers,
+ * we only need to extract the first two 16-bit segments.
  */
 export function unpackSetcode(setcodeValue: number): SetcodeDecodeResult {
   if (setcodeValue === 0) {
@@ -83,16 +87,16 @@ export function unpackSetcode(setcodeValue: number): SetcodeDecodeResult {
   }
 
   // Extract second setcode (bits 16-31)
+  // Note: JavaScript shifts are modulo 32, so >> 16 is safe for 32-bit values
   const code2 = (setcodeValue >> 16) & SETCODE_MASK;
   if (code2 !== 0) {
     setcodes.push({ code: code2 });
   }
 
-  // Extract third setcode (bits 32-47) - rarely used
-  const code3 = (setcodeValue >> 32) & SETCODE_MASK;
-  if (code3 !== 0) {
-    setcodes.push({ code: code3 });
-  }
+  // For 32-bit setcode values, only two codes are possible (lower and upper 16 bits).
+  // Shifting by 32 would wrap around due to JS shift modulo 32 behavior, so we
+  // don't attempt to extract a third code. YGOPro setcode format uses at most
+  // 32 bits anyway (2 x 16-bit codes).
 
   return {
     setcodes,

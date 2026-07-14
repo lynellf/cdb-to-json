@@ -1,10 +1,100 @@
-# Remediation phase — Phase 0–1 implementation checkpoint
+# Remediation phase — contract phases P1–P2 (Phase 0–1 implementation checkpoint)
 
 ## Status and scope
 
 This is a corrective phase after the first implementation checkpoint was reviewed as `REQUEST-CHANGES`. It is intentionally limited to Phase 0 (contract/toolchain/fixtures) and Phase 1 (reader/diagnostics/compatibility bridge). Phases 2–5 remain deferred until this checkpoint passes.
 
 The remediation does not redesign the accepted tactical package or the senior remediation specification; it reuses them. Every finding below maps to ordered corrective tasks with exact files, named test fixtures, stop conditions, and verification commands. The implementer may not declare Phase 0–1 complete until every task, every named test, and the consolidated gate pass. Do not paper over a missing capability by weakening the signed-int64, snapshot, bounded-join, secure-cleanup, or v1-compatibility contracts.
+
+## Revision 6/7 — plan-reviewer-a corrections and plan-reviewer-b remediation
+
+This revision addresses only the two remaining plan/verification blockers. It preserves the accepted R4.2 orphan contract, stale-evidence invalidation, and ordered P1 gates from the prior remediation. It does not reopen product scope or native support policy.
+
+### R6.1 — Deterministically exercise every native build outcome
+
+Refactor `scripts/build-native.mjs` into an import-safe, typed `runNativeBuild(rootDir, host, build, probe)` boundary. `rootDir` is explicit; the function must not read `process.cwd()`, host globals, or process arguments at import time and must never call `process.exit`. `host` supplies `platform`, `arch`, `nodeVersion`, `nodeAbi` (the Node module ABI, not a version string), and `napiVersion`. Injected `build` owns module compilation/copy into the supplied root, and injected `probe` returns a validated capability result: boolean `supported`, arrays of primitive/flag names, and a complete primitive-probe result with no contradictory fields. Missing fields, wrong types, or `supported:true` without every required primitive are malformed. The only process-exit side effect is the thin executable wrapper that calls `runNativeBuild` for the real pinned `node-gyp` build/probe.
+
+Freeze the typed result and manifest boundary: every outcome writes a canonical manifest containing `platform`, `arch`, `nodeAbi`, `napiVersion`, `moduleSha256`, `supported`, `supportedPrimitives`, `requiredFlags`, and `primitiveProbeResults`. `supported: true` is legal only when the packaged module exists and its SHA-256 matches `moduleSha256`. Every unsupported or malformed/failed-probe outcome removes `dist/native/secure_destination.node`, writes `supported: false` with the zero-hash sentinel and empty primitive arrays, and leaves no fallback/path-based artifact. A failed compiler may return a failed result for the wrapper, but it must still perform the same stale-module cleanup before writing the unsupported manifest.
+
+`tests/cli/nativeCapabilityCleanup.test.ts` uses an isolated temporary root and injected dependencies to exercise four independent vectors: (a) an unsupported host with a pre-existing stale module, (b) a synthetic supported Linux/Node-22 host whose injected build copies a fake module and whose post-copy probe returns `supported: false`, (c) `supported: true` with a matching module hash, and (d) a failed or malformed probe after copy. The test must prove the post-copy branch is reached, canonical `nodeAbi` semantics are used, no unsupported vector retains a module or fallback artifact, and only the matching supported vector retains the module. It must not invoke a compiler or branch on the actual host. `scripts/package-check.mjs` remains defense in depth and rejects both unsupported-manifest/module pairs and supported hash mismatches.
+
+Verification: `npx vitest run tests/cli/nativeCapabilityCleanup.test.ts`, then `npm run test:cli`, then `npm run build:native && npm run build && npm run package:check`.
+
+### R6.2 — Close the frozen orphan and aggregate-schema contract
+
+R6.2 depends on and closes the earlier R2.2 orphan correction; it is not a spans-only patch. Re-prove the full R4.2 contract in the named item/aggregate schemas and goldens. The source item schema must require `printed.name`, `printed.cardKind`, every `printed.desc`/`str1`–`str16` source field, a complete nullable typed-surface set (`monster`, `spell`, and `trap`), and `simulatorSource.rawRows` with required nullable `datas` and `texts` partners. Datas-only goldens use `cardKind: "UNKNOWN"`, null typed surfaces, null text fields, `rawRows.datas` present/`rawRows.texts` null, and `MISSING_TEXT_ROW`; texts-only goldens retain exact name/text, keep data-derived surfaces null/empty, use `rawRows.datas` null/`rawRows.texts` present, and emit `MISSING_DATA_ROW`. No required field may be represented by omission or `undefined`.
+
+Update the frozen item schemas and all named orphan/minimal goldens as needed: `schemas/cdb.card.v2.schema.json`, `schemas/ygo.card-source.v1.schema.json`, `schemas/cdb.card-array.v2.schema.json`, `schemas/ygo.card-source-array.v1.schema.json`, `tests/fixtures/expected/orphan-datas-only-card.json`, `tests/fixtures/expected/orphan-texts-only-card.json`, `tests/fixtures/expected/orphan-datas-only-source.json`, `tests/fixtures/expected/orphan-texts-only-source.json`, `tests/fixtures/expected/minimal-source.json`, `tests/fixtures/expected/minimal-source-array.json`, and `tests/conformance/schemaValidation.test.ts`. Both aggregate schemas must use a `$ref` to the frozen item schema (`cdb.card/2` or `ygo.card-source/1`); they must not duplicate an inline item shape. Conformance must load the frozen item schemas, validate all aggregate goldens through those references, assert the required orphan fields, reject deletion of each representative orphan field at item level, reject the same mutations through the aggregate validator, and reject `spansBasis: "utf-16-code-units"` at both item and aggregate levels.
+
+Set every `text.spansBasis` constant and source golden value to `"normalized"`. Retain `text.offsetEncoding: "utf-16-code-units"`; it is the offset unit and must not be moved to `spansBasis`. The aggregate negative test must fail because the `$ref` reaches the frozen item schema, not merely because the aggregate repeats a local constant. Preserve unrelated nullability, source-profile, raw-row, and diagnostic semantics.
+
+Verification: `npm run test:fixtures && npm run test:conformance`, followed by `git diff --check`, JSON parsing of all five schema files and named goldens, and an explicit aggregate mutation test run from `tests/conformance/schemaValidation.test.ts`.
+
+### R6 stop conditions
+
+Stop if the native regression can pass without reaching the post-copy probe result, if it depends on host capability or compiler availability, if `supported: false` coexists with the packaged module, or if any named Phase-0 artifact treats `utf-16-code-units` as `spansBasis`. Stop if any source artifact changes `offsetEncoding` away from `utf-16-code-units`, because that would be a separate contract change.
+
+### Reviewer-B closure additions (R6.3–R6.5)
+
+These additions are part of the active R6 gate and supersede any earlier wording in this file about native temporary creation, aggregate schema duplication, snapshot hashing, or P2 merge/output evidence.
+
+**R6.3 native ABI decision.** The selected secure-publication equivalent is named descriptor-relative temporary files plus `renameat2`: create visible temporary and lock leaves under the trusted root with `openat(O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW)`, publish with separate no-replace (`RENAME_NOREPLACE`) and force-replace (`flags=0`) operations, and remove by trusted-root-relative descriptor operations. `O_TMPFILE` and `linkat` are not part of the ABI. The C++ and TypeScript boundaries must remove path-based lock/rename calls and return/close opaque descriptors. The functional probe and manifest must prove both publication modes, trusted-root traversal, no-follow behavior, and cleanup; advertised primitives are exactly `openat2`, `openat`, and `renameat2` with the required resolution/open flags.
+
+**R6.4 snapshot and extraction decision.** Add `src/cdb/sourceHandle.ts` as the lifecycle boundary named by `INV-002`; it owns capture, materialization, extraction, reservations, and idempotent cleanup while delegating byte copying/hash calculation to `snapshotBundle.ts`. Reject every source member that is not a regular non-symlink file. Hash the exact `[main,-wal,-shm]` bytesBase64 representation incrementally with a streaming base64 encoder. Escape private `VACUUM INTO` paths as verified SQLite string literals and test quote-bearing staging paths. Open the materialized file through a URI with `uri:true`, `immutable=1`, and `defaultSafeIntegers()` before any value query. Inventory and reserve the materialized main plus every generated private journal/WAL/SHM/temporary sibling and delete them on every finally path.
+
+**R6.5 phase gate decision.** P2 owns only source snapshot/materialization, bounded reader joins, discovery, diagnostics, async iteration, and the isolated legacy writer. Remove `tests/cli/conversionLifecycle.test.ts` and all merge spool/index/lineage assertions from P2 evidence; `stagingSnapshotBudget.test.ts` proves only snapshot/materialized/legacy private files and a generic reservation contract. Merge accounting and modern output publication are P3/P4 work. P2 evidence must inspect `sourceHandle.ts` and the exact focused command sequence, and it must not claim acceptance from a later-phase test.
+
+## Revision 2 — checkpoint review remediation
+
+This revision addresses the two actionable blocking findings from the checkpoint review. It removes the absent-not-null interpretation from the active P1 package and makes the post-build capability-probe cleanup path explicit. Undefined review labels are not acceptance criteria and are not reproduced here.
+
+### Consolidated findings and decisions
+
+1. **Implementation defect — unsupported post-build probe leaves a stale module.** The native build can copy `dist/native/secure_destination.node`, then report `supported: false` from the capability probe while leaving that file beside the unsupported manifest. The smallest correction is to remove the copied module on that branch, write the unsupported manifest, and retain a regression check. The pre-build unsupported-host branch and this post-probe branch must have identical package-visible behavior.
+2. **Structural contract defect — orphan fixtures accept omission contrary to R4.2.** The existing card orphan fixtures/tests omit nullable fields and assert `undefined`, while normative R4.2 requires `cardKind: "UNKNOWN"`, null typed surfaces, null/empty text/data-derived states, and explicit missing-partner lineage. The smallest correction is to make schemas require the nullable/empty states, rewrite the golden fixtures, and assert rejection of omitted required states. Mapper phases consume this contract; this P1 task does not redesign their later decoding.
+
+### Ordered corrective tasks
+
+#### R2.1 — Redline the active orphan contract
+
+Update `docs/cdb-to-json-cli-refactor/spec.md`, `docs/cdb-to-json-cli-refactor/phase-0-contract-fixtures.md`, and the P1 entries in `docs/cdb-to-json-cli-refactor/execution-contract.json` so R4.2 is unambiguous. For `cdb.card/2`, require the orphan-visible `cardKind`, `traits`, typed surfaces, and text object: datas-only emits `UNKNOWN`, `[]`, null typed surfaces, and null text values; texts-only retains exact text/name while data-derived surfaces remain null/empty. For `ygo.card-source/1`, require `printed.name`, `printed.cardKind`, nullable typed surfaces, the complete required text object, and `simulatorSource.rawRows` with one side null. Preserve present IDs, exact present raw values, `MISSING_TEXT_ROW`/`MISSING_DATA_ROW`, empty references, and `SOURCE_ONLY`. Do not add placeholder semantics or an absent-field alternative.
+
+Files: `docs/cdb-to-json-cli-refactor/spec.md`, `docs/cdb-to-json-cli-refactor/phase-0-contract-fixtures.md`, `docs/cdb-to-json-cli-refactor/execution-contract.json`.
+
+#### R2.2 — Make schemas and golden vectors enforce the redline
+
+Update `schemas/cdb.card.v2.schema.json` and `schemas/ygo.card-source.v1.schema.json` to require the stable orphan fields and nullable/empty types without broadening unrelated fields. Rewrite `tests/fixtures/expected/orphan-datas-only-card.json`, `orphan-texts-only-card.json`, `orphan-datas-only-source.json`, and `orphan-texts-only-source.json` with the R4.2 states. Keep raw orphan vectors unchanged except where the fixed raw boundary requires partner nullability.
+
+Update `tests/conformance/schemaValidation.test.ts` to assert exact `UNKNOWN`, `null`, empty arrays, exact text retention, raw-row partner nullability, and both missing-partner diagnostics. Add negative assertions that deleting a required orphan field makes AJV validation fail. The tests must not assert `undefined` for any R4.2-required field.
+
+Files: `schemas/cdb.card.v2.schema.json`, `schemas/ygo.card-source.v1.schema.json`, the four orphan card/source golden files, `tests/conformance/schemaValidation.test.ts`.
+
+#### R2.3 — Close the native post-probe stale-artifact path
+
+Implement the same cleanup in `runNativeBuild` immediately after the injected/real `probe()` result is obtained. If the result is unsupported, failed, or malformed, remove the packaged module, write the canonical `supported: false` manifest, and return a typed unsupported/failed result; the executable wrapper alone may set a process exit code or emit diagnostics. Only a validated supported probe plus a matching module hash may retain the module and write a supported manifest. Keep `scripts/package-check.mjs` as defense in depth: any unsupported manifest with a module or supported hash mismatch remains a hard failure.
+
+Add the deterministic regression specified by R6.1 at `tests/cli/nativeCapabilityCleanup.test.ts`; it must inject a synthetic supported host and a post-copy `supported: false` probe, then assert unsupported manifest means no module. A supported-probe vector must retain only a hash-matching module. This supersedes the earlier host-branch allowance: the test must never depend on actual host capability or accept a module beside `supported: false`.
+
+Files: `scripts/build-native.mjs`, `scripts/package-check.mjs`, `tests/cli/nativeCapabilityCleanup.test.ts`.
+
+#### R2.4 — Invalidate stale evidence and rerun the checkpoint
+
+Mark `docs/cdb-to-json-cli-refactor/phases/P1/P1-EVIDENCE.md` and `docs/implementation/current.md` as superseded for the P1 completion claim until the new contract and native branch are re-proven. Do not carry forward a prior PASS statement that conflicts with the package gate. Record command output and host capability branch after rerun; the unrelated untracked storage-class suite is not part of the named P1 gate and must be reported separately rather than used to weaken this correction.
+
+Files: `docs/cdb-to-json-cli-refactor/phases/P1/P1-EVIDENCE.md`, `docs/implementation/current.md`.
+
+### Remediation verification
+
+Run these in order from a clean working tree/build output:
+
+```bash
+npm run build:native && npm run build && npm run package:check
+npm run test:fixtures && npm run test:conformance
+npm run test:unit && npx vitest run tests/cli/limitRelations.test.ts tests/cli/nativeCapabilityCleanup.test.ts
+npm test
+```
+
+The first three commands are the focused P1 proof. `npm test` is the full configured suite and must be reported independently if an unrelated untracked test fails. The checkpoint remains blocked if the package gate sees a stale module, any orphan fixture validates only because a field is omitted, or any mapper/test reintroduces absent-not-null semantics.
 
 ## Revision 1 — plan-reviewer-a corrections (A1–A9)
 
@@ -14,7 +104,7 @@ This revision is a targeted correction to the executable plan. It does not reope
 
 `vitest.config.ts` MUST include `__tests__/**/*.test.js` in addition to `__tests__/**/*.test.ts` and `tests/**/*.test.ts`. `__tests__/main.test.js` MUST import `app/index.js` (not `dist/index.js`), import `it`/`expect` from `vitest` rather than `node:test`, and assert the v1-shaped result against the checked-in fixture. `npm test` is the complete declared suite and MUST run `npm run build && vitest run`; this include glob is what makes the JavaScript app-shim test execute. The focused `test:compat` gate runs `tests/compatibility` and the app-shim test is also run by the full suite. It is a Vitest JavaScript suite, not an untracked Node-only smoke test.
 
-The package scripts are frozen for this checkpoint as follows: `build:native` runs `scripts/build-native.mjs`; `build` runs `npm run build:native && tsc -p tsconfig.json`; each focused script runs its named `tests/<area>` directory; `test` runs `npm run build && vitest run`; and `package:check` runs `scripts/package-check.mjs`. No focused script may rely on an undeclared target.
+The package scripts are frozen for this checkpoint as follows: `build:native` runs the executable wrapper in `scripts/build-native.mjs`; `build` runs `npm run build:native && tsc -p tsconfig.json`; `test:cli` is explicitly limited to `tests/cli/exitCodes.test.ts`, `tests/cli/limitRelations.test.ts`, and `tests/cli/nativeCapabilityCleanup.test.ts` until P3 expands it; the other focused scripts run their named `tests/<area>` directory; `test` runs `npm run build && vitest run`; and `package:check` runs `scripts/package-check.mjs`. No focused script may rely on an undeclared target or later-phase test.
 
 ### A2 — one exit-policy implementation
 
@@ -24,6 +114,8 @@ The package scripts are frozen for this checkpoint as follows: `build:native` ru
 export type ExitCodeState = {
   optionError: boolean;
   hasUsableInput: boolean;
+  /** True once discovery has produced an input and snapshot/open/read work has begun. */
+  inputAccessStarted: boolean;
   inputError: boolean;
   strictFailure: boolean;
   resourceOrIntegerFailure: boolean;
@@ -37,7 +129,7 @@ export type ExitCodeState = {
 };
 ```
 
-`computeExitCode` applies exactly `2 > 3 > 4 > 5 > 6 > 7 > 1`, with output error/cancellation taking the documented output-failure path and `7` requiring `continued`, at least one completed input, and at least one failed input. `DiagnosticCollector` MUST only collect, `merge`, and `promote`; it MUST NOT expose a second exit-code helper or accept ambiguous booleans. `convert()` and the CLI both construct this state and call the same exported function. `tests/unit/diagnosticsPolicy.test.ts` tests merge/promotion and `tests/cli/exitCodes.test.ts` tests the complete state matrix against this one function.
+`computeExitCode` applies one explicit predicate matrix: option error/invalid limit relation first (`2`); `!hasUsableInput && !inputAccessStarted` with no input/strict/resource/collision/output/cancellation/internal failure (`3`); output error or cancellation (`6`); input/schema/strict/resource/integer failure when no output failure occurred (`4`); merge collision when no output or input failure occurred (`5`); mixed continuation with at least one completed and one failed input (`7`); unexpected internal failure (`1`); otherwise success (`0`). This makes output failure/cancellation override pending input, collision, or partial state, input failure override collision when output is clean, and collision override partial success. `DiagnosticCollector` MUST only collect, `merge`, and `promote`; it MUST NOT expose a second exit-code helper or accept ambiguous booleans. `convert()` and the CLI both construct this state and call the same exported function. `tests/unit/diagnosticsPolicy.test.ts` tests merge/promotion and `tests/cli/exitCodes.test.ts` tests the pairwise matrix for input+writer failure, input+cancellation, input+collision, collision+writer failure, option/no-input combinations, and the successful/partial states.
 
 ### A3 — exact bounded join and raw text boundary
 
@@ -136,7 +228,7 @@ D1 uses one canonical physical representation everywhere. For the fixed member o
 ]
 ```
 
-Object keys use the repository canonical-JSON ordering, array order is fixed, absent members remain explicit, and `bytesBase64` is derived from the copied bytes (not the original path). Implementations MAY stream the equivalent canonical serialization rather than hold the base64 string in memory, but MUST produce the same digest. `src/cdb/snapshotBundle.ts`, `sourceRevisionId`, and `tests/reader/physicalSnapshotProvenance.test.ts` use this representation; the prior `[{name,present,sha256,size}]` wording is superseded. A physical reorder therefore changes this hash while canonical rows, ordinals, merge winners, and `conversionOptionsHash` remain equal.
+Object keys use the repository canonical-JSON ordering, array order is fixed, absent members remain explicit, and `bytesBase64` is derived from the copied bytes (not the original path). Implementations MUST stream the equivalent canonical serialization with bounded base64 carry state rather than hold a full member or base64 string in memory, and MUST produce the same digest. `src/cdb/sourceHandle.ts`, `src/cdb/snapshotBundle.ts`, `sourceRevisionId`, and `tests/reader/physicalSnapshotProvenance.test.ts` use this representation; the prior `[{name,present,sha256,size}]` wording is superseded. A physical reorder therefore changes this hash/source revision while `canonicalDataProjection(record)`, canonical rows, and ordinals remain equal; merge-winner invariance is proven only in P3/P4.
 
 ### A6 — Phase ownership and the minimal legacy output boundary
 
@@ -197,7 +289,7 @@ The reviewer recorded these blocking findings, each linked to the smallest accep
 | R1.3 | Live reads and no physical snapshot lifecycle | Capture `main` plus present `-wal`/`-shm` to a private sibling before opening SQLite; hash the exact fixed canonical-JSON `[ { name, present, bytesBase64 } ]` representation from Revision 1 A5; re-stat/re-hash the originals; retry bounded races; open only the copied bundle for WAL replay and `VACUUM INTO` materialization; close that connection; open only the materialized main file read-only with `immutable=1` and `safeIntegers: true`; reject `CDB_OPEN_FAILED` rather than falling back to a live read. | `tests/reader/walMaterialization.test.ts`, `tests/reader/physicalSnapshotProvenance.test.ts` |
 | R1.4 | Legacy path still unsafe/broken | Route `app/index.js` through the safe bridge; `legacyConvert` must use the new reader, preserve direct-child `.cdb`-containing names, old first-dot basename derivation, basename `ignore`, deterministic order, `<basename>.json` filename shape, raw `{ datas, texts }` table object, two-write compatibility with `LEGACY_BASENAME_COLLISION`, `LEGACY_INTEGER_UNREPRESENTABLE`, and zero `console.*` calls; `src/index.ts` exports `legacyConvert` as the default and the package root remains the supported packed-artifact legacy path during 2.x. | `tests/compatibility/legacy.test.ts`, `tests/compatibility/legacy-output.test.ts` |
 | R1.5 | Symlink / discovery policy violation | Use `lstat` for symlink detection; refuse to follow symlinks by default; when `--follow-symlinks` is set, track realpaths to break cycles and visit each target once; normalize excludes against root-relative slash form; match explicit files by basename **and** root-relative path; preserve deterministic sorted-by-relative-path order; keep legacy discovery separate with its own first-dot basename rule. | `tests/reader/discovery.test.ts`, `tests/compatibility/legacyNames.test.ts` |
-| R1.6 | Diagnostics / strict / exit aggregation missing | Add a top-level `DiagnosticCollector` that merges per-database collectors; promote `WARNING` → `ERROR` under `--strict`; apply the documented exit precedence (2 → 3 → 4 → 5 → 6 → 7 → 1) using a single `computeExitCode(...)` helper; classify "no usable input" as exit 3 before opening; classify any option-validation failure as exit 2; emit the documented `MAX_ROWS_EXCEEDED`/`MAX_TEXT_LENGTH_EXCEEDED` → `RESOURCE_LIMIT_EXCEEDED` plus the new stable codes. | `tests/unit/diagnosticsPolicy.test.ts`, `tests/cli/exitCodes.test.ts` |
+| R1.6 | Diagnostics / strict / exit aggregation missing | Add a top-level `DiagnosticCollector` that merges per-database collectors; promote `WARNING` → `ERROR` under `--strict`; apply one explicit `computeExitCode(...)` predicate matrix: option (2), no-input only before input access and absent output/cancellation (3), output/cancellation (6), input/schema/strict/resource/integer without output failure (4), collision without output/input failure (5), mixed continuation (7), internal (1); emit the documented `MAX_ROWS_EXCEEDED`/`MAX_TEXT_LENGTH_EXCEEDED` → `RESOURCE_LIMIT_EXCEEDED` plus the new stable codes. | `tests/unit/diagnosticsPolicy.test.ts`, `tests/cli/exitCodes.test.ts` |
 | R0.2 | Green tests did not cover the contract | Restore app-shim coverage (`__tests__/main.test.js`) plus the full named fixture suite from R5.6; make the Vitest include match `__tests__/**/*.test.js`, `__tests__/**/*.test.ts`, and `tests/**/*.test.ts`; declare every focused npm script before its gate; make `npm test` run `npm run build && vitest run` over the complete declared suite. | All Phase 0–1 focused gates plus `npm test` |
 
 No reviewer finding is rejected. Authoritative registry citation and downstream source-schema acceptance remain later-phase stop gates as already documented.
@@ -217,7 +309,8 @@ These tasks must complete before any Phase 1 code change is reviewed.
   - `test:unit`: `vitest run tests/unit`
   - `test:reader`: `vitest run tests/reader`
   - `test:compat`: `vitest run tests/compatibility`
-  - `test:cli`: `vitest run tests/cli`
+  - `test:cli`: `vitest run tests/cli/exitCodes.test.ts tests/cli/limitRelations.test.ts tests/cli/nativeCapabilityCleanup.test.ts` for the P1/P2 checkpoint; P3 expands this same script to its modern CLI files
+  - `test:api`: `vitest run tests/api`
   - `test:normalization`: `vitest run tests/normalization`
   - `test:source`: `vitest run tests/source`
   - `test:streaming`: `vitest run tests/streaming`
@@ -227,10 +320,10 @@ These tasks must complete before any Phase 1 code change is reviewed.
   - `lint`: keep existing `tsc --noEmit`; do not replace with a non-TSC linter.
 - `package.json` — pin `node-gyp` to `11.2.0` in `devDependencies`; add `@types/node` already present.
 - `package-lock.json` — regenerate so the `node-gyp` pin survives.
-- `scripts/build-native.mjs` — Node 22+ Linux: invoke `node-gyp rebuild` from `native/secure-destination/`, verify the expected N-API module, copy to the exact path `dist/native/secure_destination.node`, write `dist/native/capability.json` containing `{ platform, arch, nodeAbi, moduleSha256, secureDestination: true, supportedPrimitives: ["openat2","openat","linkat","renameat2"], requiredFlags: ["RESOLVE_BENEATH","RESOLVE_NO_SYMLINKS"] }`. Unsupported hosts: first remove any stale `dist/native/secure_destination.node`, then write an `unsupported` capability manifest and emit a clear stderr line; **do not** fabricate a native module.
+- `scripts/build-native.mjs` — expose import-safe `runNativeBuild(rootDir, host, build, probe)` and keep process exit only in the executable wrapper. On supported Linux/Node 22+, invoke the pinned `node-gyp` build, verify the module hash, and write a canonical manifest containing `platform`, `arch`, Node module `nodeAbi`, `napiVersion`, `moduleSha256`, `supported`, `supportedPrimitives: ["openat2","openat","renameat2"]`, and required resolution/open flags. Unsupported-host, post-probe-unsupported, failed-probe, and malformed-probe paths remove any stale `dist/native/secure_destination.node`, write `supported:false`, and leave no fallback artifact.
 - `scripts/package-check.mjs` — run `npm pack --dry-run`; verify that `dist/index.js`, `dist/cli.js`, `dist/legacy.js`, `dist/native/capability.json`, `schemas/*.schema.json`, `README.md`, `LICENSE`, and `package.json` are present; when the manifest is supported, require `dist/native/secure_destination.node` and verify its SHA-256; when the manifest is unsupported, fail if that module exists; on a release host (CI tag or `CDB_RELEASE_HOST=1`) fail loudly when the Linux native module is missing; on non-release hosts without the module, emit a non-fatal warning and continue.
-- `src/destinations/secureDestination.ts` — committed Phase-0 capability and adapter contract. It names the Linux Node 22+ support matrix, `openat2`/`openat`/`linkat`/`renameat2` primitives, required flags, trusted-root and reservation operations, and the no-path-fallback failure boundary; modern implementation is Phase 2.
-- `native/secure-destination/binding.gyp`, `native/secure-destination/src/secure_destination.cc`, `native/secure-destination/src/secure_destination.h` — committed source. The native module owns `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, no-follow directory opens, and descriptor-relative `openat`, `linkat`, `renameat2`. No unchecked string path is resolved after root acquisition.
+- `src/destinations/secureDestination.ts` — committed Phase-0 capability and adapter contract. It names the Linux Node 22+ support matrix, `openat2`/`openat`/`renameat2` named-temp ABI, required flags, trusted-root/reservation/temp/no-replace/force/cleanup operations, opaque descriptor ownership, and the no-path-fallback failure boundary; modern implementation is Phase 2.
+- `native/secure-destination/binding.gyp`, `native/secure-destination/src/secure_destination.cc`, `native/secure-destination/src/secure_destination.h` — committed source. The native module owns `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, no-follow directory opens, visible descriptor-relative named temps/locks via `openat(O_CREAT|O_EXCL|O_NOFOLLOW)`, and separate no-replace/force `renameat2` operations. It exposes no path-based lock/rename ABI and resolves no unchecked string path after root acquisition.
 - `vitest.config.ts` — extend the include glob to `["__tests__/**/*.test.ts", "__tests__/**/*.test.js", "tests/**/*.test.ts"]`; keep `environment: "node"`; keep the existing coverage exclusions. The JavaScript glob is required so `__tests__/main.test.js` executes in `npm test`.
 
 **Stop conditions.** Stop if any Phase 0 script is undeclared before its gate runs; stop if `node-gyp` is unpinned; stop if the native module is fabricated on an unsupported host; stop if an unsupported manifest coexists with a stale native module; stop if `package:check` does not verify the module hash and unsupported-state rule; stop if `vitest.config.ts` does not match both the app-shim and new `tests/**` trees.
@@ -268,11 +361,11 @@ These tasks may not start until R0.1, R0.2, and R0.3 are complete.
 
 **Files to create or modify**
 
-- `src/cdb/snapshotBundle.ts` — accept a source path; resolve siblings `main`, `-wal`, `-shm` via `lstat`; copy every present member to a private staging directory (under the configured staging root); compute the bundle hash exactly as the canonical JSON SHA-256 of the fixed `[ { name, present, bytesBase64 } ]` array defined in Revision 1 A5, including explicit absent members; retry bounded races (≤ 3) when an original identity/size/bytes changes; emit `SOURCE_MUTATED_DURING_READ` and abort when the retry budget is exhausted. Every copied member's identity/size/bytes is verified before and after copy. No string path is resolved after the staging directory is acquired.
-- `src/cdb/materializeSnapshot.ts` — open only the copied bundle with ordinary WAL-capable SQLite access (`readonly: false` is required for `VACUUM INTO`; the source is the private copy, not the user input); run `VACUUM INTO '<private materialized main>'`; close the bundle connection; never open the original source or any original sidecar; report `CDB_OPEN_FAILED` on replay or materialization failure.
-- `src/cdb/openDatabase.ts` — open only the materialized main file with `{ readonly: true, fileMustExist: true, immutable: 1, safeIntegers: true }`; disable extension loading; capture `PRAGMA encoding` exactly once before any other PRAGMA; emit `UNSUPPORTED_DATABASE_ENCODING` (exit 4) when encoding is not `UTF-8`; close the handle in `finally` on every exit path.
+- `src/cdb/sourceHandle.ts` and `src/cdb/snapshotBundle.ts` — make `sourceHandle` the named lifecycle owner. Acquire the input parent through a held directory descriptor and traverse components with `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` or equivalent descriptor-relative `openat(O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)`. Resolve siblings `main`, `-wal`, `-shm` with `lstat` only as an observation; open each present member with `O_NOFOLLOW|O_RDONLY|O_CLOEXEC`, hold the descriptor through copy/hash, fstat-verify identity/size/mode against the observation, and copy/hash from that descriptor. Reject symlinks and any non-regular member as `INVALID_PATH`; a lstat-to-open swap emits `SOURCE_MUTATED_DURING_READ`/stable path diagnostic and never reads a replacement target. Recheck identity/size/bytes plus sidecar presence before any SQLite open. Retry bounded races (≤ 3), then emit `SOURCE_MUTATED_DURING_READ`. Stream-copy members and incrementally hash the exact canonical `[ { name, present, bytesBase64 } ]` representation with bounded base64 carry state; do not allocate the full member/base64 tuple. No unchecked string path is resolved after the staging root is acquired and no path-based copy follows lstat.
+- `src/cdb/materializeSnapshot.ts` — open only the copied bundle with ordinary WAL-capable SQLite access (`readonly: false` is required for `VACUUM INTO`; the source is the private copy, not the user input); encode the private destination as a verified SQLite string literal (reject NUL and double embedded single quotes), run `VACUUM INTO`, inventory generated private journal/WAL/SHM siblings, and close the bundle connection before extraction. Never open the original source or sidecar; report `CDB_OPEN_FAILED` on replay/materialization failure.
+- `src/cdb/openDatabase.ts` — open only a URI-encoded materialized main file with `{ uri: true, readonly: true, fileMustExist: true }` and `immutable=1`; disable extension loading; call `defaultSafeIntegers()` before any value query; read `PRAGMA encoding` exactly once before text selection and emit `UNSUPPORTED_DATABASE_ENCODING` (exit 4) for anything other than `UTF-8`; close the handle in `finally` on every exit path.
 - `src/hashing/sha256.ts` — canonical JSON SHA-256 over a sorted-key, deterministic object.
-- `src/application/stagingBudget.ts` — single aggregate reservation counter used by snapshot bundle, materialized main, output staging, merge spool/index/lineage, and lock records. `reserve(path, bytes)` and `reconcile(path)` track actual file sizes; over-budget writes emit `RESOURCE_LIMIT_EXCEEDED` before the write completes; cleanup removes every reserved file on success/failure/cancellation paths.
+- `src/application/stagingBudget.ts` — single aggregate reservation counter used by source members, materialized main, private SQLite journal/WAL/SHM siblings, legacy output staging, and lock records in P2. `reserve(path, bytes)` and `reconcile(path)` track actual file sizes; over-budget writes emit `RESOURCE_LIMIT_EXCEEDED` before the write completes; cleanup removes every reserved file on success/failure/cancellation paths. Merge spool/index/lineage reservations are deferred to P3/P4.
 
 **Stop conditions.** Stop if `immutable=1` is not used for extraction; stop if the original source is ever opened; stop if `safeIntegers` is not enabled at extraction; stop if a materialization failure silently falls back to a live read; stop if the bundle hash omits any present sidecar.
 
@@ -293,7 +386,7 @@ These tasks may not start until R0.1, R0.2, and R0.3 are complete.
 - `src/application/iterateRawCards.ts` — `export function iterateRawCards(databasePath: string, options?: ReadOptions): AsyncIterableIterator<RawCardRows>`. The iterator owns the entire reader lifecycle: snapshot → materialize → open → preflight → duplicate preflight → yield per row → close. Checks `options.signal?.aborted` before work and before each `yield`. Awaits `scheduler.yield()` at least once every 256 rows. Implements `return()` and `throw()` to close handles and remove private staging/snapshot artifacts in `finally`. Emits `CANCELLED` (exit 6) at the first post-checkpoint abort; never claims success after a post-barrier abort.
 - `src/application/convertCatalog.ts` — replace per-database handle management with `iterateRawCards`; collect each database's diagnostics into a per-database `DiagnosticCollector`, then merge into a top-level `DiagnosticCollector`; apply `promote(strict)`; construct the complete `ExitCodeState` and call the sole `computeExitCode` from `src/cli/exitCodes.ts`. The collector never computes an exit code.
 - `src/cli/parseArgs.ts` — add `--max-snapshot-bytes`, `--max-staging-bytes`, `--max-spool-bytes`, `--max-output-bytes`, `--max-text-bytes`, `--max-rows`, `--on-conflict error|first|last`, `--continue-on-error`, `--pretty`, `--force`, `--diagnostics text|json|jsonl|none`, `--include-raw`, `--profile raw|card|source`, `--format json|jsonl`, `--split none|database|card`, `--merge`, `--output`, `--exclude`, `--follow-symlinks`, `--recursive`, `--locale`, `--source-namespace`, `--strict`.
-- `src/cli/exitCodes.ts` — export the typed `ExitCodeState` and sole `computeExitCode(state)` enforcing option (2) > no-input (3) > input/schema/strict/resource/integer (4) > merge collision (5) > output conflict / unsafe destination / write / cancel (6) > mixed continued database failures (7) > internal (1). Both the application and CLI call this same function.
+- `src/cli/exitCodes.ts` — export the typed `ExitCodeState` (including `inputAccessStarted`) and sole `computeExitCode(state)`, applying the explicit option/no-input/output-cancellation/input/collision/partial/internal predicate matrix. Both the application and CLI call this same function.
 
 **Stop conditions.** Stop if `iterateRawCards` is not `AsyncIterableIterator`; stop if a public synchronous iterator is exported; stop if a SIGINT handler is installed without `finally` removal; stop if a signal checkpoint is missing; stop if the exit-code precedence table is not enforced.
 
@@ -354,7 +447,7 @@ Create these new files:
 - `scripts/build-native.mjs`, `scripts/package-check.mjs`.
 - `native/secure-destination/binding.gyp`, `native/secure-destination/src/secure_destination.cc`, `native/secure-destination/src/secure_destination.h` (committed; built only on supported Linux).
 - `schemas/*.schema.json` per R0.2.
-- `src/cdb/snapshotBundle.ts`, `src/cdb/materializeSnapshot.ts`, `src/cdb/textPreflight.ts`.
+- `src/cdb/sourceHandle.ts`, `src/cdb/snapshotBundle.ts`, `src/cdb/materializeSnapshot.ts`, `src/cdb/textPreflight.ts`.
 - `src/hashing/sha256.ts`, `src/hashing/canonicalJson.ts`.
 - `src/application/{iterateRawCards,readCdb,normalizeOptions,stagingBudget,diagnosticsPolicy,limits,types}.ts`.
 - `src/compatibility/legacyOutput.ts`, `src/destinations/secureDestination.ts`.
@@ -388,14 +481,15 @@ Each test asserts diagnostics and exit path, not merely thrown-message text. Nam
 - `tests/conformance/schemaValidation.test.ts` — every frozen schema validates its golden record; aggregate schemas use `items` referencing the frozen item schema; `UNSUPPORTED_DATABASE_ENCODING` is referenced in the limits/diagnostics documentation.
 - `tests/reader/walMaterialization.test.ts` — WAL-only committed row, source member immutability, no extraction sidecar, materialization failure/no publish.
 - `tests/reader/textByteFidelity.test.ts` — UTF-16 rejection (`UNSUPPORTED_DATABASE_ENCODING`), wrong storage type precedence (`INVALID_TEXT_VALUE`), over-limit non-selection (`RESOURCE_LIMIT_EXCEEDED`), under-limit non-ASCII/astral text, invalid bytes (`INVALID_TEXT_ENCODING`).
-- `tests/reader/physicalSnapshotProvenance.test.ts` — physical bundle hash changes after physical reorder while canonical rows/ordinals/winners remain equal.
+- `tests/reader/physicalSnapshotProvenance.test.ts` — physical bundle hash changes after physical reorder; `canonicalDataProjection(record)`, canonical rows, and ordinals remain equal while full records differ only at declared physical identity fields; merge-winner invariance is deferred to P3/P4.
 - `tests/reader/discovery.test.ts` — nested directories, exclude normalization, explicit files, dotted/non-final names, symlink default/follow/cycles, deterministic ordering.
 - `tests/reader/joinDiagnostics.test.ts` — duplicate IDs, orphan rows, raw fidelity, ordinals, ordering, diagnostics codes.
-- `tests/reader/largeJoin.test.ts` — bounded memory, row limit, byte-length preflight, extra-table metadata, signed-64 decimal raw values, no JavaScript map.
-- `tests/reader/stagingSnapshotBudget.test.ts` — `maxSnapshotBytes` enforcement, aggregate staging reservation/reconciliation, cleanup on every success/failure/cancellation path, extra-table/WAL over-budget pre-copy rejection.
+- `tests/reader/largeJoin.test.ts` — bounded memory, row limit, byte-length preflight, ordinary extra-table metadata, signed-64 decimal raw values, no JavaScript map.
+- `tests/reader/extraTableLimits.test.ts` — large extra table, bounded value-free sentinel probe, `MAX_EXTRA_TABLE_ROWS_EXCEEDED`/`RESOURCE_LIMIT_EXCEEDED`, no extra-cell query, and cleanup.
+- `tests/reader/stagingSnapshotBudget.test.ts` — `maxSnapshotBytes` enforcement, source/materialization/legacy-private aggregate staging reservation/reconciliation, cleanup on every success/failure/cancellation path, generated private SQLite sidecar inventory, and extra-table/WAL over-budget pre-copy rejection; merge spool/index/lineage accounting is deferred.
 - `tests/cli/limitRelations.test.ts` — zero/equal/less/greater relation vectors before discovery/open; `INVALID_LIMIT_RELATION` exit 2.
-- `tests/cli/exitCodes.test.ts` — option (2) > no-input (3) > input/schema/strict/resource/integer (4) > merge collision (5) > output conflict / unsafe destination / write / cancel (6) > mixed continued database failures (7); under strict mode warnings promote to errors.
-- `tests/unit/diagnosticsPolicy.test.ts` — per-database collectors merge, strict promotion, severity/promotion matrix, terminal exit precedence.
+- `tests/cli/exitCodes.test.ts` — the explicit terminal predicate matrix, including input+writer failure, input+cancellation, input+collision, collision+writer failure, option/no-input combinations, no-input without input access, and mixed continuation; under strict mode warnings promote to errors. P2 proves only the pre-open/diagnostics states; merge/output lifecycle cases remain later-phase tests.
+- `tests/unit/diagnosticsPolicy.test.ts` — per-database collectors merge and strict promotion.
 - `tests/api/iterateRawCards.test.ts` — async iterator signature, per-row signal checks, scheduler checkpoints, direct-consumer `return()`/`finally` cleanup, abort rejection, `convert()` reuse.
 - `tests/api/iterateRawCards.types.test.ts` — type-level assertion that the public API is `AsyncIterableIterator<RawCardRows>` and no synchronous public iterator is exported.
 - `tests/compatibility/legacy.test.ts` — `app/index.js` invoked against `__tests__/input_dir/cards.cdb` reproduces the v1 fixture's logical content for `emit: true`; `emit: false` resolves `void` and writes nothing when no output directory is supplied; with an output directory it writes the same raw table shape and a subsequent `emit: true` call reads back the same content; `ignore` matches the derived basename; dotted/non-final names are accepted; capture stdout/stderr and assert no `console.*` calls.
@@ -413,6 +507,7 @@ npm run test:unit
 npm run test:conformance
 npm run test:reader
 npm run test:compat
+npm run test:api
 npm run test:cli
 npm run package:check
 npm test
@@ -433,7 +528,10 @@ The gate fails if:
 - a valid WAL database is rejected as self-mutating or a UTF-16 database reaches the join;
 - an invalid ID reaches the join or an orphan requires a fabricated field;
 - a snapshot/SQLite handle survives failure;
-- a signal checkpoint is missing in the async iterator.
+- a signal checkpoint is missing in the async iterator;
+- P2 evidence depends on modern conversion lifecycle or merge spool/index/lineage behavior;
+- a native outcome vector is host/compiler-dependent, `nodeAbi` is not the Node module ABI, a failed/malformed probe retains a module, or a supported hash does not match;
+- a source member is followed as a symlink, a hostile `VACUUM INTO` path is interpolated unsafely, extraction omits URI immutable/default-safe-integer setup, or generated private SQLite artifacts survive cleanup.
 
 ## Acceptance criteria
 
@@ -463,8 +561,42 @@ The gate fails if:
 ## Cross-references
 
 - `docs/cdb-to-json-cli-refactor-spec.md` — root normative spec.
-- `docs/cdb-to-json-cli-refactor/spec.md` — tactical package (revision 7).
+- `docs/cdb-to-json-cli-refactor/spec.md` — tactical package (revision 11; Revision-11 targeted adversarial closure is normative).
 - `docs/cdb-to-json-cli-refactor/phase-0-contract-fixtures.md` — Phase 0 detail.
 - `docs/cdb-to-json-cli-refactor/phase-1-reader-compatibility.md` — Phase 1 detail.
 - `docs/cdb-to-json-cli-refactor/limits-and-diagnostics.md` — limits, severity, exit precedence.
 - `docs/cdb-to-json-cli-refactor/senior-remediation-spec.md` — D1–D8 decisions.
+
+## Revision-11 targeted checkpoint corrections
+
+The four residual B re-verification blockers are closed only by the following bounded edits; these do not authorize implementation until the named gates pass:
+
+1. **Source acquisition:** `sourceHandle` owns a held input-directory descriptor, safe parent traversal (`openat2` no-symlink resolution or descriptor-relative `openat`), and held `O_NOFOLLOW|O_RDONLY|O_CLOEXEC` member descriptors for `main`, `-wal`, and `-shm`. `lstat` is an observation only; fstat identity/size/mode verification and copy/hash-from-descriptor are mandatory. `tests/reader/sourceMemberSwap.test.ts` injects deterministic swaps for all three members and proves no replacement bytes are read.
+2. **Source schema:** Phase 0 schemas and Phase 4 source tasks use required `text.sections` plus `text.sourceSpans`; every slice requires copied `text`, `start`, `end`, `kind`, and `basis: "normalized"`. `begin`/`end`-only and root `text.spans` shapes are rejected through item and aggregate `$ref` validation. The source schema removes `identity.databaseSha256`; only `simulatorSource.database.sha256` is physical and is removed with `sourceRevisionId` by `canonicalDataProjection`.
+3. **Snapshot budget:** `maxSnapshotBytes` is an aggregate snapshot/materialization counter, not just the source-bundle pre-copy estimate. Every copy/write chunk reserves before writing and reconciles actual growth for copied members, materialized main, and generated private SQLite files. The named staging test covers growth after stat, materialized/generated-private overflow, and cleanup; `maxStagingBytes` covers each physical file once plus the remaining private state.
+4. **Publication rollback:** P3's no-continue multi-output path uses a descriptor-relative commit journal, holds every reservation, and reverse-rolls back between-final failures. No-force rollback removes only new finals; force rollback restores byte-identical backups. `tests/cli/commitSetRollback.test.ts` covers every failure position and rerun; `commitSetRecovery.test.ts` covers rollback failure with retained recovery state and exit 6. `--continue-on-error` split-database remains per-database atomic by explicit exception.
+
+The focused Revision-11 commands are:
+
+```bash
+npx vitest run tests/reader/sourceMemberSwap.test.ts tests/reader/stagingSnapshotBudget.test.ts
+npx vitest run tests/conformance/schemaValidation.test.ts tests/source/translatorContract.test.ts
+npx vitest run tests/cli/commitSetRollback.test.ts tests/cli/commitSetRecovery.test.ts
+npm run build
+git diff --check
+```
+
+Stop if any correction is described only as a future intention, if path copying follows lstat, if source spans omit copied text, if `maxSnapshotBytes` is checked only before copying, or if a late final publication can leave an undocumented partial set.
+
+## Revision-12 enforcement correction
+
+The Revision-11 text above is superseded by the ordered tasks in
+`phase-r11-enforcement-and-gates.md`. Before P3/P4 dispatch, P1/P2 must additionally
+prove: absolute and relative held-anchor traversal with no post-anchor `AT_FDCWD`,
+post-copy digest/fstat from the same member descriptors, parent-component and
+same-inode mutation vectors, a real SQLite materialization quota admitted before
+writable SQLite work (see `materialization-quota.md`), and the hardened legacy
+output boundary with no path or cross-device fallback. Injected budget events do
+not replace the real materialization-quota gate. `docs/implementation/current.md`
+completion prose is non-evidence until `scripts/phase-dispatch-check.mjs` records
+all blocking P1/P2 commands and named test files.

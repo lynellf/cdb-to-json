@@ -98,6 +98,7 @@ export async function* iterateRawCards(
   const maxRowsPerTable = limits?.maxRowsPerTable ?? 1_000_000;
   const maxTextBytes = limits?.maxTextBytes ?? 4 * 1024 * 1024;
   const maxSnapshotBytes = limits?.maxSnapshotBytes ?? 4 * 1024 * 1024 * 1024;
+  const maxStagingBytes = limits?.maxStagingBytes ?? 4 * 1024 * 1024 * 1024;
 
   // Track cleanup resources
   let sourceHandle: SourceHandle | null = null;
@@ -105,6 +106,11 @@ export async function* iterateRawCards(
   let materializedPath: string | null = null;
   let materializeDir: string | null = null;
   let db: Database.Database | null = null;
+  // Application callbacks are outside the reader's error boundary. If one
+  // fails (for example, an incremental writer rejects an output chunk), it
+  // must propagate after reader-owned cleanup instead of being relabeled as a
+  // database-open failure.
+  let metadataCallbackFailed = false;
 
   // Row counter for checkpoint scheduling
   let rowCount = 0;
@@ -144,7 +150,12 @@ export async function* iterateRawCards(
       snapshotBundle.walPath,
       snapshotBundle.shmPath,
       null,
-      diagnostics
+      diagnostics,
+      {
+        snapshotBytes: snapshotBundle.totalBytes,
+        maxSnapshotBytes,
+        maxStagingBytes,
+      },
     );
     materializeDir = materializedPath ? materializedPath.substring(0, materializedPath.lastIndexOf("/")) : null;
 
@@ -223,6 +234,48 @@ export async function* iterateRawCards(
 
     checkAborted(signal);
 
+    // 4d: INTEGER storage class preflight
+    // Per P1-AC3: invalid storage class rejection. SQLite INTEGER columns
+    // must use INTEGER storage (or NULL), not TEXT/REAL/BLOB. This check runs
+    // before the join/value-selection path so invalid storage publishes nothing.
+    const INTEGER_COLUMNS = [
+      { table: "datas", column: "id" },
+      { table: "datas", column: "ot" },
+      { table: "datas", column: "alias" },
+      { table: "datas", column: "setcode" },
+      { table: "datas", column: "type" },
+      { table: "datas", column: "atk" },
+      { table: "datas", column: "def" },
+      { table: "datas", column: "level" },
+      { table: "datas", column: "race" },
+      { table: "datas", column: "attribute" },
+      { table: "datas", column: "category" },
+      { table: "texts", column: "id" },
+    ] as const;
+
+    for (const { table, column } of INTEGER_COLUMNS) {
+      const rows = db
+        .prepare(
+          `SELECT id, typeof("${column}") AS storage_type FROM "${table}" WHERE typeof("${column}") NOT IN ('integer', 'null') LIMIT 10`
+        )
+        .all() as Array<{ id: string | number; storage_type: string }>;
+
+      if (rows.length > 0) {
+        const samples = rows.slice(0, 3).map((r) => `(${r.id}, ${r.storage_type})`).join("; ");
+        diagnostics?.error(
+          DiagnosticCode.INVALID_INTEGER_VALUE,
+          `Invalid storage class for ${table}.${column}: found ${rows.length} non-INTEGER row(s). Samples: ${samples}`,
+          {
+            source: { database: databasePath, table: table },
+            details: { column, invalidStorageClass: rows[0].storage_type, count: rows.length },
+          }
+        );
+        return; // Reject before join/selection
+      }
+    }
+
+    checkAborted(signal);
+
     // Phase 4d: Collect extra-table metadata
     // Uses SQLite identifier quoting (double quotes with embedded quotes doubled)
     // to safely handle arbitrary table and column names.
@@ -240,19 +293,41 @@ export async function* iterateRawCards(
           const cols = db
             .prepare(`PRAGMA table_info(${quotedName})`)
             .all() as { name: string }[];
+          // Probe only up to the sentinel. A full COUNT(*) would scan an
+          // unbounded user table and would make maxRowsPerTable advisory.
+          const sentinel = BigInt(maxRowsPerTable) + 1n;
           const countResult = db
-            .prepare(`SELECT COUNT(*) AS cnt FROM ${quotedName}`)
-            .get() as { cnt: number };
+            .prepare(
+              `SELECT COUNT(*) AS cnt FROM (SELECT 1 AS marker FROM ${quotedName} LIMIT ?)`,
+            )
+            .get(sentinel) as { cnt: number | bigint };
+          const rowCount = BigInt(countResult.cnt);
+          if (rowCount > BigInt(maxRowsPerTable)) {
+            diagnostics?.error(
+              DiagnosticCode.RESOURCE_LIMIT_EXCEEDED,
+              `Extra table "${name}" reaches maxRowsPerTable (${maxRowsPerTable})`,
+              {
+                source: { database: databasePath },
+                details: {
+                  limitCode: "MAX_EXTRA_TABLE_ROWS_EXCEEDED",
+                  maxRows: maxRowsPerTable,
+                },
+              },
+            );
+            return;
+          }
           extraTables.push({
             name,
             columns: cols.map((c) => c.name),
-            rowCount: countResult.cnt,
+            rowCount: Number(rowCount),
           });
         } catch (err) {
           // Table became inaccessible (e.g., dropped concurrently);
           // report it as a diagnostic rather than silently skipping.
-          diagnostics?.warning(
-            DiagnosticCode.INVALID_PATH,
+          // Extra-table notices are informational per the accepted limits/diagnostics contract;
+          // they are never promoted to ERROR even in strict mode.
+          diagnostics?.info(
+            DiagnosticCode.EXTRA_TABLE_READ_FAILED,
             `Could not read extra table "${name}": ${err instanceof Error ? err.message : String(err)}`,
             { source: { database: databasePath } }
           );
@@ -266,11 +341,16 @@ export async function* iterateRawCards(
     // sourceSizeBytes is the original main .cdb file size (provenance contract).
     // bundleHash covers the full bundle including WAL/SHM.
     if (onMetadata) {
-      onMetadata({
-        bundleHash: `sha256:${snapshotBundle!.bundleHash}`,
-        sourceSizeBytes: snapshotBundle!.mainFileSize,
-        extraTables,
-      });
+      try {
+        onMetadata({
+          bundleHash: `sha256:${snapshotBundle!.bundleHash}`,
+          sourceSizeBytes: snapshotBundle!.mainFileSize,
+          extraTables,
+        });
+      } catch (error) {
+        metadataCallbackFailed = true;
+        throw error;
+      }
     }
 
     // Phase 5: Execute the bounded CTE join query
@@ -413,6 +493,9 @@ export async function* iterateRawCards(
       }
     }
   } catch (error) {
+    if (metadataCallbackFailed) {
+      throw error;
+    }
     if (signal?.aborted) {
       diagnostics?.error(
         DiagnosticCode.CANCELLED,

@@ -48,13 +48,13 @@ describe("Exit code precedence", () => {
     expect(computeExitCode(state)).toBe(ExitCode.VALIDATION_ERROR);
   });
 
-  it("precedence: 5 over 6 (collision before output error)", () => {
+  it("precedence: 6 over 5 (output error before collision)", () => {
     const state: ExitCodeState = {
       ...baseState,
       mergeCollision: true,
       outputError: true,
     };
-    expect(computeExitCode(state)).toBe(ExitCode.COLLISION);
+    expect(computeExitCode(state)).toBe(ExitCode.OUTPUT_ERROR);
   });
 
   it("precedence: 6 over 7", () => {

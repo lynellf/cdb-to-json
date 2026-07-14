@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { readSync, closeSync, fstatSync } from "node:fs";
 import { DiagnosticCollector } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
-import { SourceHandle } from "./sourceHandle.js";
+import { SourceHandle, SourceMutatedError } from "./sourceHandle.js";
 
 /**
  * Snapshot member information.
@@ -65,6 +65,65 @@ function readExactly(fd: number, size: number): Buffer {
     offset += bytesRead;
   }
   return buf;
+}
+
+function hashDescriptor(fd: number, size: number): string {
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(size, 1)));
+  let offset = 0;
+  while (offset < size) {
+    const requested = Math.min(chunk.length, size - offset);
+    const bytesRead = readSync(fd, chunk, 0, requested, offset) as number;
+    if (bytesRead === 0) {
+      throw new Error(`Unexpected end of source descriptor at byte ${offset}`);
+    }
+    hash.update(chunk.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  return hash.digest("hex");
+}
+
+function hashBytes(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function throwSourceMutation(
+  message: string,
+  diagnostics: DiagnosticCollector | undefined,
+): never {
+  const error = new SourceMutatedError(message);
+  diagnostics?.error(
+    DiagnosticCode.SOURCE_MUTATED_DURING_READ,
+    error.message,
+  );
+  throw error;
+}
+
+function verifyCapturedMember(
+  name: string,
+  fd: number,
+  initialStats: Awaited<ReturnType<typeof fstatSync>>,
+  initialDigest: string,
+  bytes: Buffer,
+  sourcePath: string,
+  diagnostics: DiagnosticCollector | undefined,
+): void {
+  const copiedDigest = hashBytes(bytes);
+  const descriptorStats = fstatSync(fd);
+  const descriptorDigest = hashDescriptor(fd, Number(descriptorStats.size));
+  if (
+    !descriptorStats.isFile() ||
+    descriptorStats.dev !== initialStats.dev ||
+    descriptorStats.ino !== initialStats.ino ||
+    descriptorStats.size !== initialStats.size ||
+    copiedDigest !== initialDigest ||
+    descriptorDigest !== initialDigest
+  ) {
+    throwSourceMutation(
+      `Source ${name} changed during snapshot acquisition: ${sourcePath}`,
+      diagnostics,
+    );
+  }
 }
 
 /**
@@ -138,12 +197,15 @@ async function acquireSnapshotBundleImpl(
       present: boolean;
       bytes: Buffer | null;
       size: number;
+      stat: Awaited<ReturnType<typeof fstatSync>> | null;
+      digest: string | null;
     };
     const members: MemberEntry[] = [];
     let totalBytes = 0;
 
     try {
       // Read main through the handle's fd (already open)
+      await sourceHandle.verifyMainIdentity(diagnostics);
       const mainStats = fstatSync(sourceHandle.mainFd);
       const mainSize = typeof mainStats.size === "bigint" ? Number(mainStats.size) : mainStats.size;
       const mainBytes = readExactly(sourceHandle.mainFd, mainSize);
@@ -153,13 +215,24 @@ async function acquireSnapshotBundleImpl(
         present: true,
         bytes: mainBytes,
         size: mainSize,
+        stat: mainStats,
+        digest: sourceHandle.mainDigest,
       });
+      verifyCapturedMember(
+        "main",
+        sourceHandle.mainFd,
+        mainStats,
+        sourceHandle.mainDigest,
+        mainBytes,
+        sourceHandle.sourcePath,
+        diagnostics,
+      );
       totalBytes += mainBytes.length;
 
       // Open WAL through handle
       const walResult = await sourceHandle.openMember("-wal");
       if (walResult !== null) {
-        const { fd: walFd, stat: walStats } = walResult;
+        const { fd: walFd, stat: walStats, digest: walDigest } = walResult;
         const walSize = typeof walStats.size === "bigint" ? Number(walStats.size) : walStats.size;
         const walBytes = readExactly(walFd, walSize);
         members.push({
@@ -168,16 +241,27 @@ async function acquireSnapshotBundleImpl(
           present: true,
           bytes: walBytes,
           size: walSize,
+          stat: walStats,
+          digest: walDigest,
         });
+        verifyCapturedMember(
+          "-wal",
+          walFd,
+          walStats,
+          walDigest,
+          walBytes,
+          sourceHandle.sourcePath,
+          diagnostics,
+        );
         totalBytes += walBytes.length;
       } else {
-        members.push({ name: "-wal", fd: null, present: false, bytes: null, size: 0 });
+        members.push({ name: "-wal", fd: null, present: false, bytes: null, size: 0, stat: null, digest: null });
       }
 
       // Open SHM through handle
       const shmResult = await sourceHandle.openMember("-shm");
       if (shmResult !== null) {
-        const { fd: shmFd, stat: shmStats } = shmResult;
+        const { fd: shmFd, stat: shmStats, digest: shmDigest } = shmResult;
         const shmSize = typeof shmStats.size === "bigint" ? Number(shmStats.size) : shmStats.size;
         const shmBytes = readExactly(shmFd, shmSize);
         members.push({
@@ -186,16 +270,29 @@ async function acquireSnapshotBundleImpl(
           present: true,
           bytes: shmBytes,
           size: shmSize,
+          stat: shmStats,
+          digest: shmDigest,
         });
+        verifyCapturedMember(
+          "-shm",
+          shmFd,
+          shmStats,
+          shmDigest,
+          shmBytes,
+          sourceHandle.sourcePath,
+          diagnostics,
+        );
         totalBytes += shmBytes.length;
       } else {
-        members.push({ name: "-shm", fd: null, present: false, bytes: null, size: 0 });
+        members.push({ name: "-shm", fd: null, present: false, bytes: null, size: 0, stat: null, digest: null });
       }
     } catch (error) {
-      diagnostics?.error(
-        DiagnosticCode.CDB_OPEN_FAILED,
-        `Failed to read source members through handle: ${error instanceof Error ? error.message : String(error)}`
-      );
+      if (!(error instanceof SourceMutatedError)) {
+        diagnostics?.error(
+          DiagnosticCode.CDB_OPEN_FAILED,
+          `Failed to read source members through handle: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       for (const m of members) {
         if (m.fd !== null && m.name !== "main") {
           try { closeSync(m.fd); } catch { /* best effort */ }
@@ -317,8 +414,14 @@ async function acquireSnapshotBundleImpl(
     const mainMember = members.find((m) => m.name === "main");
     const mainFileSize = mainMember?.bytes?.length ?? 0;
 
-    // CRITICAL: Verify the source identity AFTER capturing bytes.
-    await sourceHandle.verifyMainIdentity(diagnostics);
+    // CRITICAL: Verify the source identity AFTER capturing bytes. A failed
+    // verification must not leave the private bundle behind.
+    try {
+      await sourceHandle.verifyMainIdentity(diagnostics);
+    } catch (error) {
+      await rmStagingDir(stagingDir);
+      throw error;
+    }
 
     return {
       stagingDir,

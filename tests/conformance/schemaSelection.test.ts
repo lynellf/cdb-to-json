@@ -93,10 +93,14 @@ describe("schema selection", () => {
       expect(schema).not.toHaveProperty("documents");
     });
 
-    it("card-array items reference card schema", () => {
-      const schema = readSchema("cdb.card-array.v2.schema.json");
+    it("card-array items use frozen card schema (inlined)", () => {
+      const schema = readSchema("cdb.card-array.v2.schema.json") as {
+        items?: { $id?: string; properties?: { schema?: { const?: string } } };
+      };
       expect(schema).toHaveProperty("items");
-      expect((schema.items as Record<string, unknown>).$ref).toBe("cdb.card/2");
+      // items.$id references the frozen card schema; items.properties.schema.const confirms
+      expect(schema.items?.$id).toBe("cdb.card/2");
+      expect(schema.items?.properties?.schema?.const).toBe("cdb.card/2");
     });
 
     it("source-array schema is top-level array", () => {
@@ -107,10 +111,14 @@ describe("schema selection", () => {
       expect(schema).not.toHaveProperty("documents");
     });
 
-    it("source-array items reference source schema", () => {
-      const schema = readSchema("ygo.card-source-array.v1.schema.json");
+    it("source-array items use frozen source schema (inlined)", () => {
+      const schema = readSchema("ygo.card-source-array.v1.schema.json") as {
+        items?: { $id?: string; properties?: { schema?: { const?: string } } };
+      };
       expect(schema).toHaveProperty("items");
-      expect((schema.items as Record<string, unknown>).$ref).toBe("ygo.card-source/1");
+      // items.$id references the frozen source schema; items.properties.schema.const confirms
+      expect(schema.items?.$id).toBe("ygo.card-source/1");
+      expect(schema.items?.properties?.schema?.const).toBe("ygo.card-source/1");
     });
   });
 

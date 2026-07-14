@@ -1,0 +1,322 @@
+[
+  {
+    "id": "-9223372036854775808",
+    "name": "INT64_MIN",
+    "type": 2
+  },
+  {
+    "id": "-1000000000000",
+    "name": "NEG_TRILLION",
+    "type": 2
+  },
+  {
+    "id": "-1",
+    "name": "NEG_ONE",
+    "type": 2
+  },
+  {
+    "id": "0",
+    "name": "ZERO",
+    "type": 2
+  },
+  {
+    "id": "1",
+    "name": "CARD_0001",
+    "type": 2
+  },
+  {
+    "id": "2",
+    "name": "CARD_0002",
+    "type": 4
+  },
+  {
+    "id": "3",
+    "name": "CARD_0003",
+    "type": 8
+  },
+  {
+    "id": "4",
+    "name": "CARD_0004",
+    "type": 2
+  },
+  {
+    "id": "5",
+    "name": "CARD_0005",
+    "type": 2
+  },
+  {
+    "id": "10",
+    "name": "CARD_0010",
+    "type": 2
+  },
+  {
+    "id": "100",
+    "name": "CARD_0100",
+    "type": 2
+  },
+  {
+    "id": "1000",
+    "name": "CARD_1000",
+    "type": 2
+  },
+  {
+    "id": "10000",
+    "name": "CARD_10000",
+    "type": 2
+  },
+  {
+    "id": "100000",
+    "name": "CARD_100000",
+    "type": 2
+  },
+  {
+    "id": "1000000",
+    "name": "CARD_1000000",
+    "type": 2
+  },
+  {
+    "id": "10000000",
+    "name": "CARD_10000000",
+    "type": 2
+  },
+  {
+    "id": "15355442",
+    "name": "DARK_MAGICIAN",
+    "type": 2
+  },
+  {
+    "id": "46986414",
+    "name": "BLUE_EYES_WHITE_DRAGON",
+    "type": 2
+  },
+  {
+    "id": "53183652",
+    "name": "DARK_HOLE",
+    "type": 4
+  },
+  {
+    "id": "53186399",
+    "name": "RAIGEKI",
+    "type": 4
+  },
+  {
+    "id": "70000000",
+    "name": "PILOT_70M",
+    "type": 2
+  },
+  {
+    "id": "70000001",
+    "name": "PILOT_70M_1",
+    "type": 2
+  },
+  {
+    "id": "70000002",
+    "name": "PILOT_70M_2",
+    "type": 2
+  },
+  {
+    "id": "80000000",
+    "name": "PILOT_80M",
+    "type": 2
+  },
+  {
+    "id": "80000001",
+    "name": "PILOT_80M_1",
+    "type": 2
+  },
+  {
+    "id": "9223372036854775807",
+    "name": "INT64_MAX",
+    "type": 2
+  },
+  {
+    "id": "70781173",
+    "name": "STARDUST_DRAGON",
+    "type": 2
+  },
+  {
+    "id": "83764718",
+    "name": "CRIMSON_BLAZER",
+    "type": 2
+  },
+  {
+    "id": "95169481",
+    "name": "DARK_MAGICIAN_GIRL",
+    "type": 2
+  },
+  {
+    "id": "53183643",
+    "name": "MONSTER_REBORN",
+    "type": 4
+  },
+  {
+    "id": "12580477",
+    "name": "DARK_MYSTIC",
+    "type": 4
+  },
+  {
+    "id": "41426869",
+    "name": "CANADRIA",
+    "type": 8
+  },
+  {
+    "id": "44519536",
+    "name": "TREMENDOUS_FIRE",
+    "type": 2
+  },
+  {
+    "id": "16127481",
+    "name": "BLACK_LUSTER_SOLDIER",
+    "type": 2
+  },
+  {
+    "id": "16135489",
+    "name": "GOSENKAI",
+    "type": 2
+  },
+  {
+    "id": "66801074",
+    "name": "NUMERON_DRAGON",
+    "type": 2
+  },
+  {
+    "id": "96510162",
+    "name": "OAFDRAGON",
+    "type": 2
+  },
+  {
+    "id": "98234068",
+    "name": "HEXTAR",
+    "type": 2
+  },
+  {
+    "id": "-739688",
+    "name": "TOKEN",
+    "type": 2
+  },
+  {
+    "id": "30000001",
+    "name": "PILOT_30M_1",
+    "type": 2
+  },
+  {
+    "id": "30000002",
+    "name": "PILOT_30M_2",
+    "type": 2
+  },
+  {
+    "id": "30000003",
+    "name": "PILOT_30M_3",
+    "type": 2
+  },
+  {
+    "id": "30000004",
+    "name": "PILOT_30M_4",
+    "type": 2
+  },
+  {
+    "id": "30000005",
+    "name": "PILOT_30M_5",
+    "type": 2
+  },
+  {
+    "id": "30000006",
+    "name": "PILOT_30M_6",
+    "type": 2
+  },
+  {
+    "id": "30000007",
+    "name": "PILOT_30M_7",
+    "type": 2
+  },
+  {
+    "id": "30000008",
+    "name": "PILOT_30M_8",
+    "type": 2
+  },
+  {
+    "id": "30000009",
+    "name": "PILOT_30M_9",
+    "type": 2
+  },
+  {
+    "id": "30000010",
+    "name": "PILOT_30M_10",
+    "type": 2
+  },
+  {
+    "id": "40000000",
+    "name": "PILOT_40M",
+    "type": 2
+  },
+  {
+    "id": "50000000",
+    "name": "PILOT_50M",
+    "type": 2
+  },
+  {
+    "id": "60000000",
+    "name": "PILOT_60M",
+    "type": 2
+  },
+  {
+    "id": "75000000",
+    "name": "PILOT_75M",
+    "type": 2
+  },
+  {
+    "id": "85000000",
+    "name": "PILOT_85M",
+    "type": 2
+  },
+  {
+    "id": "90000000",
+    "name": "PILOT_90M",
+    "type": 2
+  },
+  {
+    "id": "95000000",
+    "name": "PILOT_95M",
+    "type": 2
+  },
+  {
+    "id": "99000000",
+    "name": "PILOT_99M",
+    "type": 2
+  },
+  {
+    "id": "99999998",
+    "name": "CARD_99M_MINUS_2",
+    "type": 2
+  },
+  {
+    "id": "99999999",
+    "name": "CARD_99M",
+    "type": 2
+  },
+  {
+    "id": "2147483647",
+    "name": "INT32_MAX",
+    "type": 2
+  },
+  {
+    "id": "-2147483648",
+    "name": "INT32_MIN",
+    "type": 2
+  },
+  {
+    "id": "4294967295",
+    "name": "UINT32_MAX",
+    "type": 2
+  },
+  {
+    "id": "-9223372036854775807",
+    "name": "INT64_MIN_PLUS_ONE",
+    "type": 2
+  },
+  {
+    "id": "50000001",
+    "name": "PILOT_50M_1",
+    "type": 2
+  }
+]

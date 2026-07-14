@@ -36,29 +36,79 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "ot", "alias", "setcode", "type", "atk", "def", "level", "race", "attribute", "category"],
+            "description": "datas.id is required and non-null; all other INTEGER fields may be null per the accepted NULL-preserving raw contract.",
+            "required": ["id"],
             "properties": {
-              "id": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "ot": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "alias": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "setcode": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "type": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "atk": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "def": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "level": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "race": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "attribute": { "type": "string", "pattern": "^-?[0-9]+$" },
-              "category": { "type": "string", "pattern": "^-?[0-9]+$" }
-            }
+              "id": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$",
+                "description": "Non-null INTEGER card ID as signed-int64 decimal string"
+              },
+              "ot": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Availability/OT flag; null preserves NULL SQLite INTEGER"
+              },
+              "alias": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Alias card ID; null preserves NULL SQLite INTEGER"
+              },
+              "setcode": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Setcode; null preserves NULL SQLite INTEGER"
+              },
+              "type": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Card type flags; null preserves NULL SQLite INTEGER"
+              },
+              "atk": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Attack points; null preserves NULL SQLite INTEGER"
+              },
+              "def": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Defense points; null preserves NULL SQLite INTEGER"
+              },
+              "level": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Level/rank/link markers; null preserves NULL SQLite INTEGER"
+              },
+              "race": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Monster race; null preserves NULL SQLite INTEGER"
+              },
+              "attribute": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Attribute; null preserves NULL SQLite INTEGER"
+              },
+              "category": {
+                "type": ["string", "null"],
+                "pattern": "^-?[0-9]+$",
+                "description": "Category flags; null preserves NULL SQLite INTEGER"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "texts": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "name", "desc", "str1", "str2", "str3", "str4", "str5", "str6", "str7", "str8", "str9", "str10", "str11", "str12", "str13", "str14", "str15", "str16"],
+            "required": ["id"],
             "properties": {
-              "id": { "type": "string", "pattern": "^-?[0-9]+$" },
+              "id": {
+                "type": "string",
+                "pattern": "^-?[0-9]+$",
+                "description": "Non-null INTEGER card ID as signed-int64 decimal string"
+              },
               "name": { "type": ["string", "null"] },
               "desc": { "type": ["string", "null"] },
               "str1": { "type": ["string", "null"] },
@@ -77,7 +127,8 @@
               "str14": { "type": ["string", "null"] },
               "str15": { "type": ["string", "null"] },
               "str16": { "type": ["string", "null"] }
-            }
+            },
+            "additionalProperties": false
           }
         }
       }

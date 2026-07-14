@@ -165,6 +165,11 @@ export function getCardKind(typeValue: number): CardKind {
     return "MONSTER";
   }
 
+  // Token monster (type = 8) — special case, no other monster bits needed
+  if (typeValue === MonsterTrait.TOKEN) {
+    return "MONSTER";
+  }
+
   // Effect monster (type = 2) or other monster traits
   if (typeValue & (MonsterTrait.EFFECT | MonsterTrait.TUNER | MonsterTrait.GEMINI |
                    MonsterTrait.FLIP | MonsterTrait.TOON | MonsterTrait.SPIRIT |

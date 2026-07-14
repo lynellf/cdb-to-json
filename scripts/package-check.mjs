@@ -29,11 +29,19 @@ const REQUIRED_FILES = [
 // Check if this is a release host
 const isReleaseHost = process.env.CDB_RELEASE_HOST === "1";
 
-// Check if Linux x64/arm64 with native support
-const isSupported =
-  process.platform === "linux" &&
-  (process.arch === "x64" || process.arch === "arm64") &&
-  process.version.startsWith("v22");
+/**
+ * Returns true when the host meets the declared Linux Node 22+ capability matrix.
+ * Accepts every Node major version >= 22 (per package engine Node >=22.0.0).
+ */
+function getIsSupported() {
+  if (process.platform !== "linux") return false;
+  if (process.arch !== "x64" && process.arch !== "arm64") return false;
+  const match = process.version.match(/^v(\d+)/);
+  if (!match) return false;
+  return parseInt(match[1], 10) >= 22;
+}
+
+const isSupported = getIsSupported();
 
 let failed = false;
 
@@ -63,7 +71,9 @@ if (existsSync(manifestPath)) {
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
 
-    if (manifest.supported) {
+    // Use the canonical "supported" key consistently (same as build-native.mjs)
+    const isManifestSupported = !!manifest.supported;
+    if (isManifestSupported) {
       // Supported host: verify native module
       const modulePath = "dist/native/secure_destination.node";
       if (!existsSync(modulePath)) {

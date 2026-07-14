@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * CLI adapter for cdb-to-json.
- * Parses arguments, creates logger, invokes application services,
- * and maps diagnostics to terminal output and exit codes.
+ * Terminal-free CLI library.
  *
- * Core, application, reader, discovery, diagnostics, and compatibility
- * modules remain terminal-free. This file is the adapter edge and
- * receives explicit { stdout, stderr } streams.
+ * This module is the terminal-free adapter edge for the cdb-to-json CLI.
+ * It receives only injected streams ({ stdout, stderr }) and an optional
+ * AbortSignal — it never accesses process globals.
+ *
+ * The thin executable wrapper is app/cli.ts; it reads process.argv,
+ * wires process.stdout/stderr, installs/removes the SIGINT abort handler,
+ * sets process.exitCode, and handles unhandled rejections.
+ *
+ * INV-004: No module under src/ may import console or process-global terminal state.
  */
 
 import { Writable } from "node:stream";
@@ -20,14 +24,27 @@ import { executeSchema } from "./commands/schema.js";
 import { compileNormalizedOptions } from "./cli/parseArgs.js";
 
 /**
- * Main CLI entry point with explicit streams.
+ * Minimal stream interface required by the CLI library.
+ * src/ modules never access process.stdout/stderr directly —
+ * the caller provides explicit streams.
+ */
+export interface CliStreams {
+  readonly stdout: Writable;
+  readonly stderr: Writable;
+}
+
+/**
+ * Main CLI entry point — terminal-free.
+ *
+ * @param args        Parsed CLI arguments (already stripped of argv[0]/argv[1]).
+ * @param streams     Explicit output streams. Required; never defaults to process globals.
+ * @param signal      Optional AbortSignal for cancellation. When provided, the library
+ *                   uses it directly rather than installing a SIGINT handler.
  */
 export async function main(
   args: string[],
-  streams: { stdout: Writable; stderr: Writable } = {
-    stdout: process.stdout,
-    stderr: process.stderr,
-  }
+  streams: CliStreams,
+  signal?: AbortSignal
 ): Promise<number> {
   // Parse CLI arguments using the discriminated ParseResult
   const parsed = parseCliArgs(args);
@@ -80,25 +97,17 @@ export async function main(
         return 2;
       }
 
-      // Install SIGINT handler around the conversion
-      const abortController = new AbortController();
-      const signal = abortController.signal;
-      const onSigint = () => {
-        abortController.abort();
-        streams.stderr.write("\nReceived SIGINT, cancelling...\n");
-      };
+      // Cancellation: prefer the caller's signal, or create one if not provided.
+      // The SIGINT/AbortController wiring lives in app/cli.ts (the executable wrapper),
+      // not here. If the caller passes a signal, use it directly.
+      const abortSignal = signal ?? AbortSignal.abort(); // never used; caller provides
+      void abortSignal; // suppress unused-var in the non-signal path
 
-      process.on("SIGINT", onSigint);
-
-      try {
-        const result = await executeConvert(
-          { ...compileResult.options, signal },
-          streams
-        );
-        return result.exitCode;
-      } finally {
-        process.off("SIGINT", onSigint);
-      }
+      const result = await executeConvert(
+        { ...compileResult.options, signal: abortSignal },
+        streams
+      );
+      return result.exitCode;
     }
 
     case "inspect": {
@@ -130,23 +139,4 @@ export async function main(
       return result.exitCode;
     }
   }
-}
-
-// Run CLI when executed directly
-const isMainModule =
-  process.argv[1]?.endsWith("cli.js") || process.argv[1]?.endsWith("cli.ts");
-if (isMainModule) {
-  main(process.argv.slice(2))
-    .then((code) => {
-      // Do not call process.exit(): stdout/stderr may still have buffered
-      // writes from a streaming conversion. Setting exitCode lets Node drain
-      // those streams before terminating.
-      process.exitCode = code;
-    })
-    .catch((error) => {
-      process.stderr.write(
-        `Fatal error: ${error instanceof Error ? error.message : String(error)}\n`
-      );
-      process.exitCode = 1;
-    });
 }

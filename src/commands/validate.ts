@@ -4,6 +4,8 @@
  */
 
 import { Writable } from "node:stream";
+import { validateInputs } from "../application/validateInputs.js";
+import { computeExitCode, ExitCode } from "../cli/exitCodes.js";
 import type { DiagnosticsMode } from "../application/types.js";
 
 export interface ValidateCommandResult {
@@ -25,35 +27,43 @@ export async function executeValidate(
   streams: { stdout: Writable; stderr: Writable }
 ): Promise<ValidateCommandResult> {
   try {
-    // For Phase 2, validate uses the existing discovery and preflight
-    // without creating converted output
-    const { discoverInputs } = await import("../discovery/discoverCdbInputs.js");
-
-    const discovered = await discoverInputs(inputs, {
+    const result = await validateInputs(inputs, {
+      strict: options.strict,
       recursive: options.recursive,
       exclude: options.exclude,
       followSymlinks: options.followSymlinks,
     });
 
-    if (discovered.length === 0) {
-      streams.stderr.write("Error: No CDB files found\n");
-      return { exitCode: 3 };
+    const exitCode = computeExitCode(result.exitCodeState);
+
+    // Route machine-readable report to stdout
+    const json = JSON.stringify(result, null, 2);
+    streams.stdout.write(json + "\n");
+
+    // If no usable input, write to stderr in text mode
+    if (exitCode === ExitCode.NO_INPUT) {
+      if (options.diagnosticsMode !== "json") {
+        streams.stderr.write("Error: No CDB files found in input paths\n");
+      }
+      return { exitCode };
     }
 
-    // Report validation results to stdout
-    const validationReport = {
-      schema: "cdb.validation/1",
-      databases: discovered.map((d) => ({
-        path: d.path,
-        fileName: d.name,
-        sizeBytes: d.sizeBytes,
-      })),
-      valid: true,
-    };
+    // If there were errors, also write them to stderr in text mode
+    if (exitCode !== 0 && options.diagnosticsMode !== "json") {
+      const errorCount = result.databases.reduce(
+        (sum, db) => sum + db.errors.length,
+        0
+      );
+      const warningCount = result.databases.reduce(
+        (sum, db) => sum + db.warnings.length,
+        0
+      );
+      streams.stderr.write(
+        `Validation completed with ${errorCount} error(s), ${warningCount} warning(s)\n`
+      );
+    }
 
-    streams.stdout.write(JSON.stringify(validationReport, null, 2) + "\n");
-
-    return { exitCode: 0 };
+    return { exitCode };
   } catch (error) {
     streams.stderr.write(
       `Error running validate: ${error instanceof Error ? error.message : String(error)}\n`

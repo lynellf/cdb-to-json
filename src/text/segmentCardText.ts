@@ -1,79 +1,104 @@
 /**
  * Conservative text segmentation for card descriptions.
  *
- * Implements conservative segmentation rules:
- * - Exact markers first
- * - Conservative frame rules
- * - Source spans
- * - UNSPLIT fallback
+ * Implements conservative segmentation rules for ygo.card-source/1:
+ * - Exact markers first (pendulum/monster effect markers)
+ * - Frame-based rules for Normal monster flavor text
+ * - Material line detection for Extra Deck/Ritual monsters
+ * - UNSPLIT fallback for ambiguous cases
  *
  * The converter MUST NOT:
- * - split effects merely at periods
- * - infer costs, targets, conditions, or resolution
- * - translate colon/semicolon punctuation
- * - classify if versus when triggers
- * - infer once-per-turn scope
- * - create executable operation names
+ * - Split effects merely at periods
+ * - Infer costs, targets, conditions, or resolution timing
+ * - Translate PSCT punctuation (colon/semicolon have semantic meaning)
+ * - Classify "if" versus "when" trigger types
+ * - Infer once-per-turn scope
+ * - Create executable operation names
+ *
+ * @module text/segmentCardText
  */
 
-/**
- * Text slice with source position information.
- */
-export interface TextSlice {
-  text: string;
-  start: number;
-  end: number;
-  basis: string;
-}
+import type { TextSlice } from "./types.js";
 
 /**
- * Segmentation result.
+ * Segmentation status.
+ */
+export type SegmentationStatus =
+  | "EXACT_MARKERS"   // Text split using exact string markers
+  | "FRAME_RULE"      // Text split using frame-based rules
+  | "PARTIAL"         // Some classification achieved but not complete
+  | "UNSPLIT";        // No reliable segmentation possible
+
+/**
+ * Segmentation result with named sections and unclassified segments.
  */
 export interface SegmentationResult {
+  /** Material line (e.g., "Materials: Sylvan..." or "Must first be Special Summoned...") */
   material: TextSlice | null;
+  /** Pendulum effect text (between pendulum and monster markers) */
   pendulumEffect: TextSlice | null;
+  /** Monster effect text (after monster marker) */
   monsterEffect: TextSlice | null;
+  /** Spell/Trap effect text */
   spellTrapEffect: TextSlice | null;
+  /** Flavor text for Normal monsters */
   flavor: TextSlice | null;
+  /** Unclassified text segments */
   unclassified: readonly TextSlice[];
-  segmentation: "EXACT_MARKERS" | "FRAME_RULE" | "UNSPLIT" | "PARTIAL";
+  /** Segmentation confidence level */
+  segmentation: SegmentationStatus;
 }
 
 /**
- * Pendulum effect marker.
+ * Pendulum effect marker string (exact match required).
  */
 export const PENDULUM_MARKER = "[ Pendulum Effect ]";
 
 /**
- * Monster effect marker.
+ * Monster effect marker string (exact match required).
  */
 export const MONSTER_EFFECT_MARKER = "[ Monster Effect ]";
 
 /**
- * Material marker pattern.
+ * Material line patterns (case-insensitive).
+ * These detect dedicated material lines, not effect text containing these words.
  */
-export const MATERIAL_PATTERNS = [
-  /\/\s*material\s*:/i,
-  /materials?\s*:/i,
-  /\/\s*tribute\s+怪兽/i, // Chinese
-  /^★/m, // Star marker for materials
+const MATERIAL_PATTERNS: RegExp[] = [
+  /^\s*materials?\s*:/im,
+  /^\s*material\s*:?\s*$/im,
+  /\/\s*tribute\s+怪兽/i,
+  /^★/m,
 ];
+
+/**
+ * Text kinds for sourceSpans.
+ */
+export const TEXT_KIND = {
+  MATERIAL: "material",
+  PENDULUM_EFFECT: "pendulum_effect",
+  MONSTER_EFFECT: "monster_effect",
+  SPELL_TRAP_EFFECT: "spell_trap_effect",
+  FLAVOR: "flavor",
+  UNCLASSIFIED: "unclassified",
+} as const;
 
 /**
  * Segment card text conservatively.
  *
- * Currently a stub that returns UNSPLIT.
- * Full implementation requires:
- * - Exact marker detection for pendulum/monster sections
- * - Frame-based flavor detection for normal monsters
- * - Material line detection for eligible Extra Deck/Ritual frames
+ * @param _rawDescription Raw description text from CDB (may be null) - preserved for future use
+ * @param normalized Normalized description text
+ * @param cardKind Card kind (MONSTER, SPELL, TRAP, TOKEN, UNKNOWN)
+ * @param traits Card type traits
+ * @returns Segmentation result with named sections
  */
 export function segmentCardText(
-  description: string | null,
-  _cardKind: string,
-  _traits: string[],
+  _rawDescription: string | null,
+  normalized: string | null,
+  cardKind: string,
+  traits: string[],
 ): SegmentationResult {
-  if (description === null) {
+  // Handle null description
+  if (normalized === null) {
     return {
       material: null,
       pendulumEffect: null,
@@ -85,11 +110,33 @@ export function segmentCardText(
     };
   }
 
-  // For now, just return the full description with UNSPLIT
-  // Full implementation would:
-  // 1. Check for exact pendulum/monster markers
-  // 2. Apply frame-based rules
-  // 3. Detect material lines
+  // Try exact marker segmentation first (pendulum/monster cards)
+  if (normalized.includes(PENDULUM_MARKER) || normalized.includes(MONSTER_EFFECT_MARKER)) {
+    return segmentByExactMarkers(normalized, cardKind, traits);
+  }
+
+  // Apply frame-based rules for monsters
+  if (cardKind === "MONSTER") {
+    const frameResult = segmentByFrameRules(normalized, cardKind, traits);
+    if (frameResult.segmentation !== "UNSPLIT") {
+      return frameResult;
+    }
+  }
+
+  // Spell/Trap: whole text is effect text
+  if (cardKind === "SPELL" || cardKind === "TRAP") {
+    return {
+      material: null,
+      pendulumEffect: null,
+      monsterEffect: null,
+      spellTrapEffect: createSlice(normalized, 0, normalized.length, TEXT_KIND.SPELL_TRAP_EFFECT),
+      flavor: null,
+      unclassified: [],
+      segmentation: "PARTIAL",
+    };
+  }
+
+  // TOKEN or UNKNOWN: whole text is unclassified
   return {
     material: null,
     pendulumEffect: null,
@@ -97,83 +144,291 @@ export function segmentCardText(
     spellTrapEffect: null,
     flavor: null,
     unclassified: [
-      {
-        text: description,
-        start: 0,
-        end: description.length,
-        basis: "raw",
-      },
+      createSlice(normalized, 0, normalized.length, TEXT_KIND.UNCLASSIFIED),
     ],
     segmentation: "UNSPLIT",
   };
 }
 
 /**
- * Check if text contains a pendulum effect marker.
+ * Segment text using exact string markers.
  */
-export function hasPendulumMarker(description: string): boolean {
-  return description.includes(PENDULUM_MARKER);
-}
+function segmentByExactMarkers(
+  normalized: string,
+  cardKind: string,
+  traits: string[],
+): SegmentationResult {
+  let segmentation: SegmentationStatus = "EXACT_MARKERS";
+  let material: TextSlice | null = null;
+  let pendulumEffect: TextSlice | null = null;
+  let monsterEffect: TextSlice | null = null;
+  let flavor: TextSlice | null = null;
+  const unclassified: TextSlice[] = [];
 
-/**
- * Check if text contains a monster effect marker.
- */
-export function hasMonsterEffectMarker(description: string): boolean {
-  return description.includes(MONSTER_EFFECT_MARKER);
-}
+  // Check for pendulum marker
+  const pendulumIdx = normalized.indexOf(PENDULUM_MARKER);
+  const hasPendulum = pendulumIdx !== -1;
 
-/**
- * Extract pendulum and monster sections by exact markers.
- */
-export function extractSectionsByMarkers(
-  description: string,
-): { pendulumEffect: string | null; monsterEffect: string | null } {
-  const parts = description.split(PENDULUM_MARKER);
+  // Check for monster marker
+  const monsterIdx = normalized.indexOf(MONSTER_EFFECT_MARKER);
+  const hasMonster = monsterIdx !== -1;
 
-  if (parts.length === 2) {
-    // Found pendulum marker
-    return {
-      pendulumEffect: parts[1].split(MONSTER_EFFECT_MARKER)[0].trim() || null,
-      monsterEffect: parts[1].includes(MONSTER_EFFECT_MARKER)
-        ? parts[1].split(MONSTER_EFFECT_MARKER)[1].trim() || null
-        : null,
-    };
+  if (hasPendulum) {
+    // Extract pendulum effect
+    const pendulumStart = pendulumIdx + PENDULUM_MARKER.length;
+    let pendulumEnd: number;
+
+    if (hasMonster) {
+      pendulumEnd = monsterIdx;
+    } else {
+      // No monster marker - find material line or use rest
+      const materialMatch = findMaterialLine(normalized, pendulumStart);
+      if (materialMatch) {
+        pendulumEnd = materialMatch.start;
+        material = materialMatch;
+      } else {
+        pendulumEnd = normalized.length;
+      }
+    }
+
+    if (pendulumEnd > pendulumStart) {
+      const pendulumText = normalized.substring(pendulumStart, pendulumEnd);
+      const trimmed = pendulumText.trim();
+      if (trimmed.length > 0) {
+        // Trimmed content starts at pendulumStart (leading whitespace removed)
+        // Trimmed content ends at pendulumStart + trimmed.length
+        pendulumEffect = createSlice(normalized, pendulumStart, pendulumStart + trimmed.length, TEXT_KIND.PENDULUM_EFFECT);
+      }
+    }
+
+    // Extract monster effect (if pendulum marker exists, monster marker is after it)
+    if (hasMonster) {
+      const monsterStart = monsterIdx + MONSTER_EFFECT_MARKER.length;
+      const monsterText = normalized.substring(monsterStart);
+      const trimmed = monsterText.trim();
+      if (trimmed.length > 0) {
+        monsterEffect = createSlice(normalized, monsterStart, monsterStart + trimmed.length, TEXT_KIND.MONSTER_EFFECT);
+      }
+    }
+  } else if (hasMonster) {
+    // Monster marker only (no pendulum)
+    const monsterStart = monsterIdx + MONSTER_EFFECT_MARKER.length;
+    const monsterText = normalized.substring(monsterStart);
+    const trimmed = monsterText.trim();
+    if (trimmed.length > 0) {
+      monsterEffect = createSlice(normalized, monsterStart, monsterStart + trimmed.length, TEXT_KIND.MONSTER_EFFECT);
+    }
   }
 
-  // Check for monster effect marker without pendulum
-  const monsterParts = description.split(MONSTER_EFFECT_MARKER);
-  if (monsterParts.length === 2) {
-    return {
-      pendulumEffect: null,
-      monsterEffect: monsterParts[1].trim() || null,
-    };
+  // For Normal monsters, check for flavor text
+  if (cardKind === "MONSTER" && traits.includes("NORMAL")) {
+    // Normal monsters with only one paragraph after monster marker = likely flavor
+    const effectText = monsterEffect?.text ?? "";
+    const lines = effectText.split("\n").filter((l) => l.trim().length > 0);
+
+    if (lines.length <= 2 && effectText.length < 100 && monsterEffect) {
+      // Short text after monster marker suggests flavor text
+      const effectSlice = monsterEffect;
+      flavor = createSlice(normalized, effectSlice.start, effectSlice.end, TEXT_KIND.FLAVOR);
+      monsterEffect = null;
+    }
   }
+
+  // Build unclassified from any gaps
+  const gaps = findGaps(normalized, [material, pendulumEffect, monsterEffect, flavor].filter((s): s is TextSlice => s !== null));
+  unclassified.push(...gaps);
 
   return {
-    pendulumEffect: null,
-    monsterEffect: null,
+    material,
+    pendulumEffect,
+    monsterEffect,
+    spellTrapEffect: null,
+    flavor,
+    unclassified,
+    segmentation,
   };
 }
 
 /**
- * Check if description appears to be a normal monster flavor text.
+ * Segment text using frame-based rules.
  */
-export function isLikelyFlavorText(
-  description: string,
+function segmentByFrameRules(
+  normalized: string,
   cardKind: string,
   traits: string[],
-): boolean {
-  // Normal monsters typically have short descriptions
-  // that are just flavor text
-  if (cardKind !== "MONSTER") {
-    return false;
+): SegmentationResult {
+  // Check for material line
+  const materialMatch = findMaterialLine(normalized, 0);
+
+  // For Normal monsters, the effect text is often flavor
+  if (cardKind === "MONSTER" && traits.includes("NORMAL")) {
+    const effectText = materialMatch
+      ? normalized.substring(materialMatch.end).trim()
+      : normalized.trim();
+
+    // Short single-paragraph effect = likely flavor text
+    const lines = effectText.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length <= 2 && effectText.length < 100) {
+      return {
+        material: materialMatch,
+        pendulumEffect: null,
+        monsterEffect: null,
+        spellTrapEffect: null,
+        flavor: materialMatch
+          ? createSlice(normalized, materialMatch.end, normalized.length, TEXT_KIND.FLAVOR)
+          : createSlice(normalized, 0, normalized.length, TEXT_KIND.FLAVOR),
+        unclassified: [],
+        segmentation: "FRAME_RULE",
+      };
+    }
   }
 
-  if (!traits.includes("NORMAL")) {
-    return false;
+  // For non-normal monsters with material, try to classify effect text
+  if (materialMatch) {
+    const effectStart = materialMatch.end;
+    const effectEnd = normalized.length;
+    const effectText = normalized.substring(effectStart, effectEnd).trim();
+
+    if (effectText.length > 0) {
+      return {
+        material: materialMatch,
+        pendulumEffect: null,
+        monsterEffect: createSlice(normalized, effectStart, effectEnd, TEXT_KIND.MONSTER_EFFECT),
+        spellTrapEffect: null,
+        flavor: null,
+        unclassified: [],
+        segmentation: "FRAME_RULE",
+      };
+    }
   }
 
-  // Short description suggests flavor text
-  // (This is a heuristic, not definitive)
-  return description.length < 100;
+  // Could not segment using frame rules
+  return {
+    material: null,
+    pendulumEffect: null,
+    monsterEffect: null,
+    spellTrapEffect: null,
+    flavor: null,
+    unclassified: [createSlice(normalized, 0, normalized.length, TEXT_KIND.UNCLASSIFIED)],
+    segmentation: "UNSPLIT",
+  };
+}
+
+/**
+ * Find a material line in the text.
+ */
+function findMaterialLine(
+  normalized: string,
+  startIndex: number,
+): TextSlice | null {
+  for (const pattern of MATERIAL_PATTERNS) {
+    const match = normalized.substring(startIndex).match(pattern);
+    if (match) {
+      const matchStart = startIndex + (match.index ?? 0);
+      const matchEnd = matchStart + match[0].length;
+
+      // Find the end of this line
+      const lineEnd = normalized.indexOf("\n", matchEnd);
+      const textEnd = lineEnd === -1 ? normalized.length : lineEnd;
+
+      return createSlice(normalized, matchStart, textEnd, TEXT_KIND.MATERIAL);
+    }
+  }
+  return null;
+}
+
+/**
+ * Find gaps between known slices.
+ */
+function findGaps(normalized: string, slices: TextSlice[]): TextSlice[] {
+  const gaps: TextSlice[] = [];
+  let lastEnd = 0;
+
+  // Sort slices by start position
+  const sorted = [...slices].sort((a, b) => a.start - b.start);
+
+  for (const slice of sorted) {
+    if (slice.start > lastEnd) {
+      // Gap between last slice and this one
+      const gapText = normalized.substring(lastEnd, slice.start).trim();
+      if (gapText.length > 0) {
+        gaps.push(createSlice(normalized, lastEnd, slice.start, TEXT_KIND.UNCLASSIFIED));
+      }
+    }
+    lastEnd = Math.max(lastEnd, slice.end);
+  }
+
+  // Check for trailing gap
+  if (lastEnd < normalized.length) {
+    const trailingText = normalized.substring(lastEnd).trim();
+    if (trailingText.length > 0) {
+      gaps.push(createSlice(normalized, lastEnd, normalized.length, TEXT_KIND.UNCLASSIFIED));
+    }
+  }
+
+  return gaps;
+}
+
+/**
+ * Create a TextSlice from offsets into normalized text.
+ */
+function createSlice(
+  normalized: string,
+  start: number,
+  end: number,
+  kind: string,
+): TextSlice {
+  const text = normalized.substring(start, end);
+  return {
+    text,
+    start,
+    end,
+    kind,
+    basis: "normalized",
+  };
+}
+
+/**
+ * Get all source spans from a segmentation result.
+ * Returns an ordered list of all text slices.
+ */
+export function getSourceSpans(result: SegmentationResult): readonly TextSlice[] {
+  const spans: TextSlice[] = [];
+
+  // Add named sections in order
+  if (result.material) spans.push(result.material);
+  if (result.pendulumEffect) spans.push(result.pendulumEffect);
+  if (result.monsterEffect) spans.push(result.monsterEffect);
+  if (result.spellTrapEffect) spans.push(result.spellTrapEffect);
+  if (result.flavor) spans.push(result.flavor);
+
+  // Add unclassified
+  spans.push(...result.unclassified);
+
+  return spans;
+}
+
+/**
+ * Build the sections object for source profile output.
+ */
+export function buildTextSections(
+  result: SegmentationResult,
+): {
+  material: TextSlice | null;
+  pendulumEffect: TextSlice | null;
+  monsterEffect: TextSlice | null;
+  spellTrapEffect: TextSlice | null;
+  flavor: TextSlice | null;
+  unclassified: readonly TextSlice[];
+  segmentation: SegmentationStatus;
+} {
+  return {
+    material: result.material,
+    pendulumEffect: result.pendulumEffect,
+    monsterEffect: result.monsterEffect,
+    spellTrapEffect: result.spellTrapEffect,
+    flavor: result.flavor,
+    unclassified: result.unclassified,
+    segmentation: result.segmentation,
+  };
 }

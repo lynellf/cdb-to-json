@@ -4,6 +4,11 @@
 #include <napi.h>
 #include <string>
 
+// renameat2 flags — defined in linux/fs.h but included here for portability
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+
 namespace secure_destination {
 
 // Resolve flags for openat2
@@ -37,6 +42,15 @@ Napi::Value AcquireTrustedRoot(const Napi::CallbackInfo& info);
 // Open a path relative to a trusted root (descriptor-relative)
 Napi::Value OpenRelative(const Napi::CallbackInfo& info);
 
+// Create one directory component relative to a held descriptor
+Napi::Value MkdirRelative(const Napi::CallbackInfo& info);
+
+// Remove one file component relative to a held descriptor
+Napi::Value UnlinkRelative(const Napi::CallbackInfo& info);
+
+// Remove one directory component relative to a held descriptor
+Napi::Value RmdirRelative(const Napi::CallbackInfo& info);
+
 // Create a temporary file relative to a trusted root
 Napi::Value CreateTempRelative(const Napi::CallbackInfo& info);
 
@@ -51,6 +65,11 @@ Napi::Value UnlockFile(const Napi::CallbackInfo& info);
 
 // Close a descriptor
 Napi::Value CloseFd(const Napi::CallbackInfo& info);
+
+// Export constants
+Napi::Value GetResolveBeneath(const Napi::CallbackInfo& info);
+Napi::Value GetResolveNoSymlinks(const Napi::CallbackInfo& info);
+Napi::Value GetRenameNoReplace(const Napi::CallbackInfo& info);
 
 }  // namespace secure_destination
 

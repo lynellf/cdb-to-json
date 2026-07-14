@@ -97,17 +97,20 @@ export type { RawDatabaseEnvelope, DatabaseSourceMetadata } from "./profiles/raw
 export { mapCardToProfile } from "./profiles/cardProfile.js";
 export type { CardProfileOutput, CardProfileOptions } from "./profiles/cardProfile.js";
 
-export { mapCardToSource, createDefaultSourceRevisionId, createDefaultConversionOptionsHash } from "./profiles/sourceProfile.js";
-export type { SourceProfileOutput, SourceProfileOptions } from "./profiles/sourceProfile.js";
+export { mapCardToSource, createDefaultSourceRevisionId, createDefaultConversionOptionsHash, createDefaultDatabaseSha256, createTestContext } from "./profiles/sourceProfile.js";
+export type { CardSourceDocument, SourceDocumentResult, ToSourceDocumentContext } from "./profiles/sourceProfile.js";
 
-// Re-export text segmentation
+// Re-export text processing
 export {
+  normalizeText,
   segmentCardText,
-  hasPendulumMarker,
-  hasMonsterEffectMarker,
-  extractSectionsByMarkers,
-} from "./text/segmentCardText.js";
-export type { TextSlice, SegmentationResult } from "./text/segmentCardText.js";
+  PENDULUM_MARKER,
+  MONSTER_EFFECT_MARKER,
+  TEXT_KIND,
+  getSourceSpans,
+  buildTextSections,
+} from "./text/index.js";
+export type { TextSlice, TextKind, SegmentationResult, SegmentationStatus } from "./text/index.js";
 
 // Re-export hashing
 export { sha256Buffer, sha256String, canonicalJson, canonicalSha256 } from "./hashing/sha256.js";

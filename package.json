@@ -16,25 +16,42 @@
     "./legacy": {
       "types": "./dist/legacy.d.ts",
       "import": "./dist/legacy.js"
+    },
+    "./schemas/cdb.raw": {
+      "types": "./schemas/cdb.raw.v1.schema.json",
+      "import": "./schemas/cdb.raw.v1.schema.json"
+    },
+    "./schemas/cdb.card": {
+      "types": "./schemas/cdb.card.v2.schema.json",
+      "import": "./schemas/cdb.card.v2.schema.json"
+    },
+    "./schemas/ygo.card-source": {
+      "types": "./schemas/ygo.card-source.v1.schema.json",
+      "import": "./schemas/ygo.card-source.v1.schema.json"
     }
   },
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
-    "build": "npm run build:native && tsc -p tsconfig.json",
+    "build": "npm run build:native && tsc -p tsconfig.json && node scripts/build-cli-entry.mjs",
     "test:fixtures": "vitest run tests/fixtures",
     "test:unit": "vitest run tests/unit",
-    "test:reader": "vitest run tests/reader",
-    "test:compat": "vitest run tests/compatibility",
+    "test:reader": "vitest run tests/reader/discovery.test.ts tests/reader/joinDiagnostics.test.ts tests/reader/largeJoin.test.ts tests/reader/resourceLimits.test.ts tests/reader/extraTableLimits.test.ts tests/reader/textByteFidelity.test.ts tests/reader/walMaterialization.test.ts tests/reader/physicalSnapshotProvenance.test.ts tests/reader/sourceMemberSwap.test.ts tests/reader/sourceParentSwap.test.ts tests/reader/sourceSameInodeMutation.test.ts tests/reader/materializationQuota.test.ts tests/reader/stagingSnapshotBudget.test.ts",
+    "test:compat": "vitest run tests/compatibility/legacy.test.ts tests/compatibility/legacy-output.test.ts tests/compatibility/legacyNames.test.ts tests/compatibility/legacyOutputSecurity.test.ts",
     "test:cli": "vitest run tests/cli",
-    "test:api": "vitest run tests/api",
-    "test:normalization": "vitest run tests/normalization --passWithNoTests",
-    "test:source": "vitest run tests/source --passWithNoTests",
-    "test:streaming": "vitest run tests/streaming --passWithNoTests",
+    "test:package": "vitest run tests/package",
+    "test:release": "vitest run tests/release",
+    "test:api": "vitest run tests/api/iterateRawCards.test.ts tests/api/iterateRawCards.types.test.ts",
+    "test:normalization": "vitest run tests/normalization",
+    "test:source": "vitest run tests/source",
+    "test:streaming": "vitest run tests/streaming",
     "test:conformance": "vitest run tests/conformance",
+    "phase:dispatch:p3": "node scripts/phase-dispatch-check.mjs P3",
+    "phase:dispatch:p4": "node scripts/phase-dispatch-check.mjs P4",
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "package:check": "node scripts/package-check.mjs",
+    "benchmark": "node benchmarks/convert-full-cdb.ts",
     "prepublishOnly": "npm run build && npm test && npm run package:check"
   },
   "keywords": [
@@ -50,6 +67,9 @@
   "devDependencies": {
     "@types/better-sqlite3": "7.6.12",
     "@types/node": "^22.0.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "node-addon-api": "^8.0.0",
     "node-gyp": "11.2.0",
     "typescript": "^5.6.0",
     "vitest": "^2.0.0"

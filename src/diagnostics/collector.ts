@@ -18,6 +18,40 @@ export interface DiagnosticSummary {
 }
 
 /**
+ * Diagnostic families that are promoted from WARNING to ERROR under --strict mode.
+ *
+ * Per limits-and-diagnostics.md (accepted contract):
+ * "Unknown registry bits, incomplete joins, malformed packed fields, and ambiguous text
+ * are warnings by default and errors under --strict.
+ * Informational provenance and extra-table notices remain informational."
+ *
+ * These codes are promoted only; all others (INFO, ERROR, or WARNING outside this list)
+ * are unchanged by promote().
+ */
+const STRICT_PROMOTE_WARNING_FAMILIES: readonly DiagnosticCode[] = [
+  // Unknown bits (registry)
+  "UNKNOWN_TYPE_BITS",
+  "UNKNOWN_ATTRIBUTE_BITS",
+  "UNKNOWN_MONSTER_TYPE_BITS",
+  "UNKNOWN_LINK_MARKER_BITS",
+  "UNKNOWN_AVAILABILITY_BITS",
+  "UNKNOWN_CATEGORY_BITS",
+  // Incomplete joins
+  "MISSING_DATA_ROW",
+  "MISSING_TEXT_ROW",
+  // Malformed packed fields
+  "INVALID_PACKED_LEVEL",
+  "INVALID_PACKED_SETCODE",
+  // Ambiguous text
+  "AMBIGUOUS_TEXT_SEGMENTATION",
+  "INVALID_TEXT_MARKER",
+  // Conflicting flags
+  "CONFLICTING_CARD_KIND_FLAGS",
+  "CONFLICTING_SUBTYPE_FLAGS",
+  "CONFLICTING_PROGRESSION_FLAGS",
+] as const;
+
+/**
  * Collector for diagnostics with support for filtering, aggregation, and strict promotion.
  */
 export class DiagnosticCollector {
@@ -125,13 +159,21 @@ export class DiagnosticCollector {
   }
 
   /**
-   * Promote WARNING diagnostics to ERROR.
-   * This is used by strict mode.
+   * Promote WARNING diagnostics to ERROR only for the documented strict families.
+   *
+   * Per limits-and-diagnostics.md: unknown bits, incomplete joins, malformed
+   * packed fields, and ambiguous text are warnings under normal mode and errors
+   * under --strict.  Provenance and extra-table notices remain informational.
+   *
+   * This replaces the previous blanket promotion of all WARNINGs.
    */
   promote(strict: boolean): void {
     if (!strict) return;
     for (const d of this.diagnostics) {
-      if (d.severity === "WARNING") {
+      if (
+        d.severity === "WARNING" &&
+        (STRICT_PROMOTE_WARNING_FAMILIES as readonly string[]).includes(d.code)
+      ) {
         d.severity = "ERROR";
       }
     }
