@@ -45,8 +45,6 @@
     "test:source": "vitest run tests/source",
     "test:streaming": "vitest run tests/streaming",
     "test:conformance": "vitest run tests/conformance",
-    "phase:dispatch:p3": "node scripts/phase-dispatch-check.mjs P3",
-    "phase:dispatch:p4": "node scripts/phase-dispatch-check.mjs P4",
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
