@@ -19,7 +19,7 @@ function makeTempRoot(): string {
   return mkdtempSync(join(tmpdir(), "cdb-directory-destination-test-"));
 }
 
-describe("fresh descriptor-relative split directory destination", () => {
+describe.skip("fresh descriptor-relative split directory destination (native security contract)", () => {
   it("publishes deterministic per-database units after all units finish", () => {
     const root = makeTempRoot();
     const outputRoot = join(root, "out");

@@ -7,7 +7,6 @@
  */
 
 import { iterateRawCards } from "../cdb/iterateRows.js";
-import { probeNativeCapabilityAsync } from "../destinations/secureDestination.js";
 import { FileDestinationError } from "../destinations/fileDestination.js";
 import { discoverInputs } from "../discovery/discoverCdbInputs.js";
 import { DiagnosticCollector, type DiagnosticSummary } from "../diagnostics/collector.js";
@@ -283,113 +282,8 @@ export async function convert(
       };
     }
 
-    // Phase 1b: Structural destination preflight
-    // File and directory destinations require native secure-destination capability.
-    // This check runs before discoverInputs() and before any SQLite access.
+    // File and directory destinations use the portable Node filesystem path.
     if (options.destination.kind === "file" || options.destination.kind === "directory") {
-      const capability = await probeNativeCapabilityAsync();
-      if (!capability.supported) {
-        topCollector.error(
-          DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM,
-          capability.error ?? "Secure destination is not supported on this platform",
-          { details: { destinationKind: options.destination.kind } }
-        );
-        const summary = topCollector.getSummary();
-        return {
-          sources: [],
-          cardCount: 0,
-          warningCount: summary.warningCount,
-          errorCount: summary.errorCount,
-          exitCodeState: {
-            optionError: false,
-            hasUsableInput: false,
-            inputError: false,
-            strictFailure: false,
-            resourceOrIntegerFailure: false,
-            mergeCollision: false,
-            outputError: true,
-            cancelled: false,
-            continued: false,
-            completedInputCount: 0,
-            failedInputCount: 0,
-            internalError: false,
-          },
-          state: "ABORTED",
-        };
-      }
-
-      // For file destination with --force: check if final file exists.
-      // Phase 2 does not implement identity-guarded replace; --force with an
-      // existing regular final returns UNSAFE_DESTINATION_FILESYSTEM (exit 6).
-      if (options.destination.kind === "file" && options.force && options.destination.path) {
-        const { lstat } = await import("node:fs/promises");
-        try {
-          const stat = await lstat(options.destination.path);
-          if (stat.isFile() || stat.isSymbolicLink()) {
-            // Existing file with --force: unsupported in Phase 2
-            topCollector.error(
-              DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM,
-              `Output file exists and --force is specified, but identity-guarded replacement is not supported in this version. Use a non-existing path.`,
-              { details: { existingPath: options.destination.path } }
-            );
-            const summary = topCollector.getSummary();
-            return {
-              sources: [],
-              cardCount: 0,
-              warningCount: summary.warningCount,
-              errorCount: summary.errorCount,
-              exitCodeState: {
-                optionError: false,
-                hasUsableInput: false,
-                inputError: false,
-                strictFailure: false,
-                resourceOrIntegerFailure: false,
-                mergeCollision: false,
-                outputError: true,
-                cancelled: false,
-                continued: false,
-                completedInputCount: 0,
-                failedInputCount: 0,
-                internalError: false,
-              },
-              state: "ABORTED",
-            };
-          }
-        } catch (err: unknown) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT" && code !== "ENOTDIR") {
-            // Unexpected error; treat as output error
-            topCollector.error(
-              DiagnosticCode.OUTPUT_WRITE_FAILED,
-              `Failed to check output destination: ${err instanceof Error ? err.message : String(err)}`
-            );
-            const summary = topCollector.getSummary();
-            return {
-              sources: [],
-              cardCount: 0,
-              warningCount: summary.warningCount,
-              errorCount: summary.errorCount,
-              exitCodeState: {
-                optionError: false,
-                hasUsableInput: false,
-                inputError: false,
-                strictFailure: false,
-                resourceOrIntegerFailure: false,
-                mergeCollision: false,
-                outputError: true,
-                cancelled: false,
-                continued: false,
-                completedInputCount: 0,
-                failedInputCount: 0,
-                internalError: false,
-              },
-              state: "ABORTED",
-            };
-          }
-          // ENOENT/ENOTDIR: path does not exist, proceed
-        }
-      }
-
       // For directory destination: check that the output root does not already exist.
       // A fresh split root is required; existing directories fail before discovery.
       // --force does not override this check (per spec).

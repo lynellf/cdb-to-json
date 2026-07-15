@@ -230,15 +230,14 @@ describe("packed CLI smoke tests", () => {
   });
 
   describe("exit codes", () => {
-    it("exit 2 for missing profile (before no-input check)", () => {
+    it("exit 3 for missing input when the default raw profile is selected", () => {
       try {
-        // Without explicit --profile, CLI defaults to 'card' which is not available
-        // So option validation (exit 2) happens before input check (exit 3)
+        // The default profile is raw, so input discovery determines this result.
         execSync("node dist/cli.js convert", { stdio: "pipe" });
         expect.fail("Should have thrown");
       } catch (error: unknown) {
         const err = error as { status?: number };
-        expect(err.status).toBe(2);
+        expect(err.status).toBe(3);
       }
     });
 

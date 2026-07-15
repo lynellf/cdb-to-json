@@ -10,6 +10,8 @@
 import { describe, it, expect } from "vitest";
 import { spawnSync, spawn } from "node:child_process";
 import { join } from "node:path";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 // Path to compiled CLI
 const CLI_PATH = join(process.cwd(), "dist", "cli.js");
@@ -25,7 +27,9 @@ function runCli(args: string[]): { stdout: string; stderr: string; exitCode: num
   const result = spawnSync("node", [CLI_PATH, ...args], {
     encoding: "utf-8",
     timeout: 30000,
-    maxBuffer: 50 * 1024 * 1024,
+    // A complete source-profile corpus includes the simulator raw rows and
+    // slightly exceeds 50 MiB for the fixture database.
+    maxBuffer: 128 * 1024 * 1024,
   });
 
   return {
@@ -123,20 +127,24 @@ describe("Validate Command", () => {
 });
 
 describe("Convert Command", () => {
-  it("rejects card profile with option error", () => {
-    const { stderr, exitCode } = runCli([
+  it("converts a CDB to consumer-friendly card records", () => {
+    const { stdout, exitCode } = runCli([
       "convert", FIXTURE_CDB, "--profile", "card"
     ]);
-    expect(stderr).toContain("not available");
-    expect(exitCode).toBe(2);
+    expect(exitCode).toBe(0);
+    const cards = JSON.parse(stdout);
+    expect(cards[0].schema).toBe("cdb.card/2");
+    expect(cards[0].cardKind).toBeTruthy();
   });
 
-  it("rejects source profile with option error", () => {
-    const { stderr, exitCode } = runCli([
+  it("converts a CDB to YGO-DSL source documents", () => {
+    const { stdout, exitCode } = runCli([
       "convert", FIXTURE_CDB, "--profile", "source"
     ]);
-    expect(stderr).toContain("not available");
-    expect(exitCode).toBe(2);
+    expect(exitCode).toBe(0);
+    const documents = JSON.parse(stdout);
+    expect(documents[0].schema).toBe("ygo.card-source/1");
+    expect(documents[0].text.sections).toBeDefined();
   });
 
   it("rejects merge with raw profile", () => {
@@ -177,6 +185,12 @@ describe("Convert Command", () => {
     expect(stderr).toBeTruthy();
   });
 
+  it("defaults to the available raw profile", () => {
+    const { stdout, exitCode } = runCli(["convert", FIXTURE_CDB]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("cdb.raw/1");
+  });
+
   it("converts one CDB file to raw JSONL on stdout", () => {
     const { stdout, exitCode } = runCli([
       "convert", FIXTURE_CDB, "--profile", "raw", "--format", "jsonl"
@@ -207,44 +221,49 @@ describe("Convert Command", () => {
     expect(exitCode).toBe(3);
   });
 
-  it("file output requires native capability", () => {
-    // On supported host: conversion succeeds (exit 0)
-    // The test verifies that capability check doesn't block valid conversions
-    const { stderr, exitCode } = runCli([
-      "convert", FIXTURE_CDB, "--profile", "raw",
-      "--output", "/tmp/cdb-test-file-output.cdb"
+  it("writes raw output to a normal file on every supported Node platform", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "cdb-file-output-"));
+    const outputPath = join(outputDir, "cards.json");
+    const { exitCode } = runCli([
+      "convert", FIXTURE_CDB, "--profile", "raw", "--output", outputPath,
     ]);
-    // Should succeed or fail based on input/output, not capability
-    // (Exit 0 = success, 3 = no input, 5 = collision, etc.)
-    expect([0, 3, 5, 6]).toContain(exitCode);
-    // Should not be a parse error or option error
-    expect(stderr).not.toContain("not valid");
-    expect(stderr).not.toContain("Invalid");
+    try {
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(outputPath, "utf8")).schema).toBe("cdb.raw/1");
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 
-  it("directory output requires native capability", () => {
-    // On supported host: conversion succeeds or fails based on input
-    const { stderr, exitCode } = runCli([
+  it("writes split raw output to a normal directory on every supported Node platform", () => {
+    const parentDir = mkdtempSync(join(tmpdir(), "cdb-directory-output-"));
+    const outputDir = join(parentDir, "out");
+    const { exitCode } = runCli([
       "convert", FIXTURE_CDB, "--profile", "raw", "--split", "database",
-      "--output", "/tmp/cdb-test-dir-output"
+      "--output", outputDir,
     ]);
-    // Should succeed or fail based on input/output, not capability
-    expect([0, 3, 5, 6]).toContain(exitCode);
-    // Should not be a parse error or option error
-    expect(stderr).not.toContain("not valid");
+    try {
+      expect(exitCode).toBe(0);
+      expect(readdirSync(outputDir)).toContain("000001-cards.raw.json");
+    } finally {
+      rmSync(parentDir, { recursive: true, force: true });
+    }
   });
 
-  it("--force with existing file is handled correctly", () => {
-    // On supported host: --force doesn't cause parse errors
-    const { stderr, exitCode } = runCli([
+  it("--force replaces an existing file", () => {
+    const outputDir = mkdtempSync(join(tmpdir(), "cdb-force-output-"));
+    const outputPath = join(outputDir, "cards.json");
+    writeFileSync(outputPath, "old output");
+    const { exitCode } = runCli([
       "convert", FIXTURE_CDB, "--profile", "raw",
-      "--output", "/tmp/cdb-test-force.cdb", "--force"
+      "--output", outputPath, "--force",
     ]);
-    // Should succeed or fail based on input/output
-    expect([0, 3, 5, 6]).toContain(exitCode);
-    // Should not be a parse error or option error
-    expect(stderr).not.toContain("not valid");
-    expect(stderr).not.toContain("Invalid");
+    try {
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(outputPath, "utf8")).schema).toBe("cdb.raw/1");
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 });
 

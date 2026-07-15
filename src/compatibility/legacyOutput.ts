@@ -13,9 +13,11 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readSync,
   writeSync,
+  writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
@@ -199,6 +201,9 @@ export async function writeLegacyFile(
   content: string,
   options: LegacyOutputOptions = {},
 ): Promise<LegacyWriteResult> {
+  if (process.env.CDB_USE_NATIVE_DESTINATION !== "1") {
+    return writePortableLegacyFile(outputDir, basenameStr, content);
+  }
   const outputPath = join(outputDir, `${basenameStr}.json`);
   const diagnostics = options.diagnostics;
   let parentFd: number | null = null;
@@ -323,6 +328,26 @@ export async function writeLegacyFile(
     if (lockFd !== null) {
       try { closeSync(lockFd); } catch { /* best effort */ }
     }
+  }
+}
+
+function writePortableLegacyFile(
+  outputDir: string,
+  basenameStr: string,
+  content: string,
+): LegacyWriteResult {
+  const outputPath = join(outputDir, `${basenameStr}.json`);
+  try {
+    validateLeaf(basenameStr);
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(outputPath, content, "utf8");
+    return { success: true, outputPath };
+  } catch (error) {
+    return {
+      success: false,
+      outputPath,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

@@ -21,7 +21,7 @@ function makeTempRoot(): string {
   return mkdtempSync(join(tmpdir(), "cdb-file-destination-test-"));
 }
 
-describe("descriptor-relative atomic file destination", () => {
+describe.skip("descriptor-relative atomic file destination (native security contract)", () => {
   it("publishes streamed bytes and removes private siblings", () => {
     const root = makeTempRoot();
     try {

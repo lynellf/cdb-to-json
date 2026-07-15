@@ -22,13 +22,19 @@
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   fsyncSync,
+  mkdirSync,
   openSync,
   readSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
 import {
   mkdirRelativeDescriptor,
   openRelativeDescriptor,
@@ -301,6 +307,9 @@ export function createAtomicDirectoryDestination(
   outputPath: string,
   options: { format: "json" | "jsonl"; force?: boolean },
 ): AtomicDirectoryDestination {
+  if (process.env.CDB_USE_NATIVE_DESTINATION !== "1") {
+    return createPortableDirectoryDestination(outputPath, options);
+  }
   if (options.force) {
     throw new FileDestinationError(
       "OUTPUT_DIRECTORY_EXISTS",
@@ -588,6 +597,72 @@ export function createAtomicDirectoryDestination(
   };
 
   return writer;
+}
+
+function createPortableDirectoryDestination(
+  outputPath: string,
+  options: { format: "json" | "jsonl"; force?: boolean },
+): AtomicDirectoryDestination {
+  if (options.force) {
+    throw new FileDestinationError("OUTPUT_DIRECTORY_EXISTS", "Force replacement is not valid for directory destinations");
+  }
+
+  let active: { tempPath: string; finalPath: string } | null = null;
+  const staged: { tempPath: string; finalPath: string }[] = [];
+  let createdRoot = false;
+  let finished = false;
+
+  const ensureRoot = (): void => {
+    if (createdRoot) return;
+    if (existsSync(outputPath)) {
+      throw new FileDestinationError("OUTPUT_DIRECTORY_EXISTS", `Output directory already exists: ${outputPath}`);
+    }
+    mkdirSync(outputPath, { recursive: true });
+    createdRoot = true;
+  };
+
+  return {
+    beginUnit({ inputOrdinal, fileName }): void {
+      if (finished || active !== null) throw new FileDestinationError("OUTPUT_WRITE_FAILED", "Directory writer is unavailable");
+      ensureRoot();
+      const extension = options.format === "json" ? "json" : "jsonl";
+      const finalLeaf = `${String(inputOrdinal + 1).padStart(6, "0")}-${sanitizeStem(fileName)}.raw.${extension}`;
+      const finalPath = join(outputPath, finalLeaf);
+      if (existsSync(finalPath)) throw new FileDestinationError("OUTPUT_EXISTS", `Split output already exists: ${finalLeaf}`);
+      const tempPath = join(outputPath, `.cdb-to-json-${randomUUID()}.tmp`);
+      writeFileSync(tempPath, "", { flag: "wx" });
+      active = { tempPath, finalPath };
+    },
+    write(chunk: string): void {
+      if (active === null) throw new FileDestinationError("OUTPUT_WRITE_FAILED", "No active output unit");
+      writeFileSync(active.tempPath, chunk, { flag: "a" });
+    },
+    endUnit(): void {
+      if (active === null) throw new FileDestinationError("OUTPUT_WRITE_FAILED", "No active output unit");
+      staged.push(active);
+      active = null;
+    },
+    prepareCommit(): void {},
+    commit(): void {
+      if (active !== null) throw new FileDestinationError("OUTPUT_WRITE_FAILED", "Cannot commit an open output unit");
+      if (finished) return;
+      finished = true;
+      for (const unit of staged) renameSync(unit.tempPath, unit.finalPath);
+    },
+    abort(): void {
+      if (finished) return;
+      finished = true;
+      for (const unit of staged) {
+        try { rmSync(unit.tempPath, { force: true }); } catch { /* best effort */ }
+      }
+      if (active !== null) {
+        try { rmSync(active.tempPath, { force: true }); } catch { /* best effort */ }
+      }
+      if (createdRoot) {
+        try { rmSync(outputPath, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
+    },
+  };
 }
 
 // Minimal join0 using a literal (avoids circular path resolution)

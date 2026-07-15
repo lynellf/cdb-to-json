@@ -1,13 +1,15 @@
 # cdb-to-json
 
-CLI-first Yu-Gi-Oh! Card Database (CDB) ingestion tool for EDOPro/YGOPro-compatible SQLite databases. Converts CDB files to JSON with support for multiple output profiles, streaming, and secure file output.
+CLI-first Yu-Gi-Oh! Card Database (CDB) ingestion tool for EDOPro/YGOPro-compatible SQLite databases. Converts CDB files on macOS, Linux, and Windows.
 
 ## Features
 
 - **CLI-first design**: Full-featured command-line interface with argument parsing and structured diagnostics
-- **Multiple profiles**: `raw` (lossless), `card` (normalized), `source` (translation-ready)
+- **Raw profile**: lossless CDB database envelopes (`cdb.raw/1`)
+- **Card profile**: client-friendly card records (`cdb.card/2`)
+- **Source profile**: YGO-DSL source records with simulator provenance (`ygo.card-source/1`)
 - **Streaming**: Memory-efficient processing for large databases
-- **Secure output**: Atomic file operations on Node 22+ Linux
+- **Portable output**: stdout, files, and split directories on Node 22+
 - **Deterministic**: Hashes exclude presentation-only fields
 
 ## Quick Start
@@ -34,8 +36,8 @@ npx cdb-to-json schema raw
 | Profile | Description | Schema |
 |---------|-------------|--------|
 | `raw` | Lossless database envelope | `cdb.raw/1` |
-| `card` | Normalized card records | `cdb.card/2` |
-| `source` | Translation-ready documents | `ygo.card-source/1` |
+| `card` | Client-friendly card catalog record | `cdb.card/2` |
+| `source` | YGO-DSL source record with simulator provenance | `ygo.card-source/1` |
 
 ### Raw Profile
 
@@ -48,18 +50,24 @@ Outputs a complete database envelope preserving all raw data.
 ### Card Profile
 
 ```bash
-npx cdb-to-json convert cards.cdb --profile card
+npx cdb-to-json convert cards.cdb --profile card > cards.json
 ```
 
-Outputs normalized card records with decoded types, attributes, and text.
+Outputs one client-friendly record per card. It decodes card type, traits,
+monster/spell/trap fields, identity, archetype codes, and simulator flags.
 
 ### Source Profile
 
 ```bash
-npx cdb-to-json convert cards.cdb --profile source
+npx cdb-to-json convert cards.cdb --profile source > source.json
 ```
 
-Outputs documents optimized for translation pipelines with text segmentation.
+Outputs one provenance-rich YGO-DSL source document per card, including
+normalized and segmented text plus the originating CDB rows.
+
+`card` and `source` currently accept exactly one input database and write to
+stdout or a single `--output` file. `--merge` and `--split` are not available
+for those profiles yet.
 
 ## Output Formats
 
@@ -76,6 +84,8 @@ npx cdb-to-json convert cards.cdb --format jsonl > output.jsonl
 ```
 
 ## Output Splitting
+
+The split and merge options below apply to the `raw` profile.
 
 ### Single File
 
@@ -154,7 +164,7 @@ npx cdb-to-json convert cards.cdb --output existing.json --force
 # Install dependencies
 npm ci
 
-# Build (includes native secure-destination module)
+# Build
 npm run build
 
 # Run all tests

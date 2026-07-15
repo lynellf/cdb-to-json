@@ -86,7 +86,7 @@ const COMMON_OPTIONS = {
  */
 const CONVERT_OPTIONS = {
   ...COMMON_OPTIONS,
-  "profile": { type: "string" as const, short: "p", default: "card" as const },
+  "profile": { type: "string" as const, short: "p", default: "raw" as const },
   "format": { type: "string" as const, short: "f", default: "json" as const },
   "output": { type: "string" as const, short: "o" },
   "split": { type: "string" as const, default: "auto" as const },
@@ -334,7 +334,7 @@ export function compileNormalizedOptions(
   const opts = parsed.options;
 
   // Parse command-specific values
-  const profile = (opts.profile as string) || "card";
+  const profile = (opts.profile as string) || "raw";
   if (!["raw", "card", "source"].includes(profile)) {
     return {
       valid: false,

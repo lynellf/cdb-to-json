@@ -38,9 +38,9 @@ export interface ConcreteOutput {
 export interface OutputPlan {
   /** Normalized convert options */
   options: NormalizedConvertOptions;
-  /** Whether this is a raw profile conversion (only profile available in Phase 2) */
+  /** Whether this is a raw profile conversion */
   isRawConversion: boolean;
-  /** Whether card/source conversion was rejected */
+  /** Retained for compatibility with callers that distinguish unavailable profiles */
   isProfileNotAvailable: boolean;
   /** Number of logical outputs expected */
   logicalOutputCount: number;
@@ -49,25 +49,20 @@ export interface OutputPlan {
 }
 
 /**
- * Phase 2 only supports the "raw" profile.
  * Validates the profile/format/split/merge/conflict matrix before
  * any discovery or snapshot access.
  */
 export function validateOutputPlan(
   options: NormalizedConvertOptions
 ): OutputPlanResult {
-  // Phase 2 capability check: only raw profile is available
   if (options.profile !== "raw") {
-    return {
-      valid: true,
-      plan: {
-        options,
-        isRawConversion: false,
-        isProfileNotAvailable: true,
-        logicalOutputCount: 0,
-        allowsStdout: true,
-      },
-    };
+    if (options.merge || options.split === "card" || options.destination.kind === "directory") {
+      return { valid: false, error: "Card and source merge/split output is not available yet. Use one input with stdout or --output <file>." };
+    }
+    if (options.pretty && options.format === "jsonl") {
+      return { valid: false, error: "--pretty is not valid with --format jsonl." };
+    }
+    return { valid: true, plan: { options, isRawConversion: false, isProfileNotAvailable: false, logicalOutputCount: 1, allowsStdout: true } };
   }
 
   // Valid: raw profile
@@ -147,16 +142,10 @@ export function validateOutputCardinality(
   discoveredInputCount: number
 ): OutputPlanResult {
   if (options.profile !== "raw") {
-    return {
-      valid: true,
-      plan: {
-        options,
-        isRawConversion: false,
-        isProfileNotAvailable: true,
-        logicalOutputCount: 0,
-        allowsStdout: true,
-      },
-    };
+    if (discoveredInputCount !== 1) {
+      return { valid: false, error: "Card and source conversion currently require exactly one input database." };
+    }
+    return { valid: true, plan: { options, isRawConversion: false, isProfileNotAvailable: false, logicalOutputCount: 1, allowsStdout: true } };
   }
 
   // Raw with no inputs

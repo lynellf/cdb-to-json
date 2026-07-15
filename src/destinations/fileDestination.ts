@@ -14,12 +14,17 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  existsSync,
+  mkdirSync,
   openSync,
   readSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   atomicRenameDescriptor,
   atomicRenameReplace,
@@ -204,6 +209,48 @@ export interface AtomicFileDestination extends Writer {
  * When force=true, backs up the existing final before replacing it.
  */
 export function createAtomicFileDestination(
+  outputPath: string,
+  options: { force?: boolean } = {},
+): AtomicFileDestination {
+  if (process.env.CDB_USE_NATIVE_DESTINATION === "1") {
+    return createNativeAtomicFileDestination(outputPath, options);
+  }
+  const force = options.force ?? false;
+  mkdirSync(dirname(outputPath), { recursive: true });
+  if (existsSync(outputPath) && !force) {
+    throw new FileDestinationError("OUTPUT_EXISTS", `Output file already exists: ${outputPath}`);
+  }
+
+  const tempPath = `${outputPath}.cdb-to-json-${randomUUID()}.tmp`;
+  let finished = false;
+  writeFileSync(tempPath, "", { flag: "wx" });
+
+  return {
+    write(data: string): void {
+      if (finished) throw new FileDestinationError("OUTPUT_WRITE_FAILED", "Output writer is closed");
+      writeFileSync(tempPath, data, { flag: "a" });
+    },
+    commit(): void {
+      if (finished) return;
+      finished = true;
+      try {
+        renameSync(tempPath, outputPath);
+      } catch (error) {
+        throw new FileDestinationError(
+          "OUTPUT_WRITE_FAILED",
+          `Failed to publish output: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    abort(): void {
+      if (finished) return;
+      finished = true;
+      try { unlinkSync(tempPath); } catch { /* best effort */ }
+    },
+  };
+}
+
+function createNativeAtomicFileDestination(
   outputPath: string,
   options: { force?: boolean } = {},
 ): AtomicFileDestination {

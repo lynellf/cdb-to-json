@@ -20,6 +20,13 @@ import {
   type AtomicDirectoryDestination,
 } from "../destinations/directoryDestination.js";
 import type { Writer } from "../application/convertCatalog.js";
+import { iterateRawCards, type RawDatabaseMetadata } from "../cdb/iterateRows.js";
+import { discoverInputs } from "../discovery/discoverCdbInputs.js";
+import { normalizeCard } from "../normalization/normalizeCard.js";
+import { mapCardToProfile } from "../profiles/cardProfile.js";
+import { mapCardToSource } from "../profiles/sourceProfile.js";
+import { DiagnosticCollector } from "../diagnostics/collector.js";
+import { canonicalSha256 } from "../hashing/sha256.js";
 
 export interface ConvertCommandResult {
   exitCode: number;
@@ -48,69 +55,6 @@ export async function executeConvert(
     return { exitCode: 2, sourceCount: 0, cardCount: 0 };
   }
 
-  // Structural preflight: file/directory destinations require native capability.
-  // This check is also performed in convertService, but we perform it here
-  // to ensure it fails before discoverInputs() is called in any path.
-  //
-  // Per the adversarial publication amendment (B2-4), we run a side-effect-contained
-  // probe on the selected parent filesystem: no-symlink traversal, descriptor-relative
-  // exclusive lock/temp creation, and no-replace publication are exercised and then
-  // cleaned by owned handles.
-  if (
-    options.destination.kind === "file" ||
-    options.destination.kind === "directory"
-  ) {
-    const { probeNativeCapabilityAsync } = await import(
-      "../destinations/secureDestination.js"
-    );
-    const capability = await probeNativeCapabilityAsync();
-    if (!capability.supported) {
-      streams.stderr.write(
-        `[ERROR] ${DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM}: ${capability.error ?? "Secure destination is not supported on this platform"}\n`
-      );
-      return { exitCode: 6, sourceCount: 0, cardCount: 0 };
-    }
-
-    // Verify filesystem capability for the specific destination parent
-    const parentPath =
-      options.destination.kind === "directory"
-        ? options.destination.path
-        : options.destination.path
-          ? options.destination.path.includes("/")
-            ? options.destination.path.slice(
-                0,
-                options.destination.path.lastIndexOf("/")
-              ) || "."
-            : "."
-        : ".";
-
-    const { probeFilesystemCapability } = await import(
-      "../destinations/nativeAdapter.js"
-    );
-    const fsProbe = await probeFilesystemCapability(parentPath);
-    if (!fsProbe) {
-      streams.stderr.write(
-        `[ERROR] ${DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM}: Cannot probe filesystem capabilities at '${parentPath}'\n`
-      );
-      return { exitCode: 6, sourceCount: 0, cardCount: 0 };
-    }
-
-    // Verify required capabilities
-    if (!fsProbe.supportsOpenAt2 || !fsProbe.supportsRenameAt2) {
-      streams.stderr.write(
-        `[ERROR] ${DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM}: Filesystem does not support required primitives (openat2, renameat2)\n`
-      );
-      return { exitCode: 6, sourceCount: 0, cardCount: 0 };
-    }
-
-    if (!fsProbe.supportsNoReplace) {
-      streams.stderr.write(
-        `[ERROR] ${DiagnosticCode.UNSAFE_DESTINATION_FILESYSTEM}: Filesystem does not support no-replace atomic rename\n`
-      );
-      return { exitCode: 6, sourceCount: 0, cardCount: 0 };
-    }
-  }
-
   let dataWriter: Writer | AtomicFileDestination | AtomicDirectoryDestination;
   try {
     if (options.destination.kind === "file" && options.destination.path) {
@@ -134,6 +78,10 @@ export async function executeConvert(
     return { exitCode: 6, sourceCount: 0, cardCount: 0 };
   }
   const diagnosticsWriter = createStdoutDestination(streams.stderr);
+
+  if (options.profile !== "raw") {
+    return executeStructuredProfile(options, dataWriter, streams);
+  }
 
   let result;
   try {
@@ -216,4 +164,89 @@ export async function executeConvert(
     sourceCount: result.sources.length,
     cardCount: result.cardCount,
   };
+}
+
+async function executeStructuredProfile(
+  options: NormalizedConvertOptions,
+  writer: Writer,
+  streams: { stdout: Writable; stderr: Writable },
+): Promise<ConvertCommandResult> {
+  const inputs = await discoverInputs(options.inputs, {
+    recursive: options.recursive,
+    exclude: options.exclude,
+    followSymlinks: options.followSymlinks,
+  });
+  if (inputs.length !== 1) {
+    streams.stderr.write("[ERROR] NO_CDB_INPUT: Card and source conversion currently require exactly one input database.\n");
+    writer.abort?.();
+    return { exitCode: 3, sourceCount: 0, cardCount: 0 };
+  }
+
+  const input = inputs[0];
+  const diagnostics = new DiagnosticCollector();
+  let metadata: RawDatabaseMetadata | null = null;
+  let cardCount = 0;
+  let first = true;
+  const conversionOptionsHash = `sha256:${canonicalSha256({
+    profile: options.profile,
+    locale: options.locale ?? "en",
+    sourceNamespace: options.sourceNamespace,
+    includeRaw: options.includeRaw,
+  })}`;
+
+  const writeRecord = (record: unknown): void => {
+    const encoded = JSON.stringify(record, null, options.pretty ? 2 : undefined);
+    if (options.format === "jsonl") {
+      writer.write(`${encoded}\n`);
+      return;
+    }
+    writer.write(first ? `[${options.pretty ? "\n" : ""}` : `,${options.pretty ? "\n" : ""}`);
+    writer.write(encoded);
+    first = false;
+  };
+
+  try {
+    for await (const rows of iterateRawCards(input.path, {
+      signal: options.signal,
+      limits: options.limits,
+      diagnostics,
+      followSymlinks: options.followSymlinks,
+      onMetadata: (candidate) => { metadata = candidate; },
+    })) {
+      const sourceMetadata = metadata as RawDatabaseMetadata | null;
+      if (!sourceMetadata) throw new Error("Reader yielded a row before verified source metadata");
+      const normalized = normalizeCard(rows, {
+        locale: options.locale ?? "en",
+        sourceNamespace: options.sourceNamespace,
+        registryHashes: {},
+        limits: options.limits,
+      }, diagnostics);
+      const record = options.profile === "card"
+        ? mapCardToProfile(normalized, {
+            locale: options.locale ?? "en",
+            sourceNamespace: options.sourceNamespace,
+            databaseSha256: sourceMetadata.bundleHash,
+            databaseFileName: input.name,
+          })
+        : mapCardToSource(normalized, rows, {
+            locale: options.locale ?? "en",
+            sourceNamespace: options.sourceNamespace,
+            databaseFileName: input.name,
+            databaseSha256: sourceMetadata.bundleHash,
+            sourceRevisionId: sourceMetadata.bundleHash,
+            conversionOptionsHash,
+          }).value;
+      writeRecord(record);
+      cardCount += 1;
+    }
+    if (!metadata) throw new Error("Reader completed without verified source metadata");
+    if (options.format === "json") writer.write(first ? "[]\n" : `${options.pretty ? "\n" : ""}]\n`);
+    writer.commit?.();
+    streams.stderr.write(`Processed 1 database(s)\nTotal cards: ${cardCount}\nWarnings: ${diagnostics.getWarnings().length}\nErrors: ${diagnostics.getErrors().length}\nConversion complete\n`);
+    return { exitCode: diagnostics.getErrors().length > 0 ? 4 : 0, sourceCount: 1, cardCount };
+  } catch (error) {
+    writer.abort?.();
+    streams.stderr.write(`[ERROR] ${DiagnosticCode.CDB_OPEN_FAILED}: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { exitCode: 4, sourceCount: 1, cardCount: 0 };
+  }
 }

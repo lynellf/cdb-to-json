@@ -30,10 +30,10 @@ COMMON OPTIONS
   --continue-on-error, -C    Continue after database-level failures
 
 CONVERT OPTIONS
-  --profile, -p <name>    Output profile: raw, card, source (default: card)
+  --profile, -p <name>    Output profile: raw, card, source (default: raw)
   --format, -f <format>    Output format: json, jsonl (default: json)
   --output, -o <path>      Output path (- for stdout)
-  --split <mode>           Split output: none, database, card (default: database)
+  --split <mode>           Split output: none, database, card (default: auto)
   --merge, -m              Combine card rows from all inputs
   --on-conflict <policy>   Conflict policy: error, first, last (default: error)
   --pretty, -P             Pretty-print JSON output
@@ -42,9 +42,8 @@ CONVERT OPTIONS
 
 EXAMPLES
   cdb-to-json convert cards.cdb
-  cdb-to-json convert ./databases --profile card --output ./out
-  cdb-to-json convert cards.cdb --profile source --format jsonl
-  cdb-to-json convert base.cdb overrides.cdb --merge --on-conflict last
+  cdb-to-json convert ./databases --output ./out
+  cdb-to-json convert cards.cdb --format jsonl
   cdb-to-json inspect cards.cdb
   cdb-to-json schema card
   cdb-to-json validate cards.cdb --strict
@@ -61,8 +60,12 @@ EXIT CODES
 
 PROFILES
   raw     Lossless extraction (cdb.raw/1 schema)
-  card    Consumer-friendly records (cdb.card/2 schema)
-  source  Provenance-rich for YGO-DSL (ygo.card-source/1 schema)
+  card    Client-friendly card catalog records (cdb.card/2 schema)
+  source  YGO-DSL source records with simulator provenance (ygo.card-source/1 schema)
+
+PROFILE OUTPUT
+  card and source currently accept one input database and write to stdout or
+  a single --output file. --merge and --split are not yet available for them.
 
 DOCUMENTATION
   https://github.com/lynellf/cdb-to-json

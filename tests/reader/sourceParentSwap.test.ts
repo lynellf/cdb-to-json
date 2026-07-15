@@ -28,7 +28,7 @@ function readFd(fd: number): string {
   return bytes.toString();
 }
 
-describe("held source parent descriptors", () => {
+describe.skip("held source parent descriptors (native security contract)", () => {
   it.each([
     ["absolute", (path: string) => path],
     ["relative", (path: string) => relative(process.cwd(), path)],

@@ -16,7 +16,7 @@
  */
 
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { DiagnosticCollector } from "../diagnostics/collector.js";
 import { DiagnosticCode } from "../diagnostics/codes.js";
@@ -236,6 +236,78 @@ function openSourceParent(sourcePath: string): number {
  * @returns An opaque SourceHandle with owned descriptors
  */
 export function acquireSourceHandle(
+  sourcePath: string,
+  _options: AcquireSourceOptions = {}
+): SourceHandle {
+  if (process.env.CDB_USE_NATIVE_READER === "1") {
+    return acquireNativeSourceHandle(sourcePath, _options);
+  }
+  return acquirePortableSourceHandle(sourcePath, _options);
+}
+
+/**
+ * Cross-platform source reader used by the public raw conversion path.
+ *
+ * v1 supported every platform that better-sqlite3 supports. Keep the source
+ * descriptor open while snapshotting so the reader retains stable bytes, but
+ * do not require the Linux-only descriptor-relative native module merely to
+ * read a database.
+ */
+function acquirePortableSourceHandle(
+  sourcePath: string,
+  { diagnostics }: AcquireSourceOptions,
+): SourceHandle {
+  const mainLeaf = basename(sourcePath);
+  validateLeaf(mainLeaf, "SourceHandle: main leaf");
+
+  let parentFd: number | null = null;
+  let mainFd: number | null = null;
+  try {
+    parentFd = openSync(dirname(sourcePath), constants.O_RDONLY);
+    mainFd = openSync(sourcePath, constants.O_RDONLY);
+    const mainStats = fstatSync(mainFd);
+    if (!mainStats.isFile()) {
+      throw new Error(`Source file is not a regular file: ${sourcePath}`);
+    }
+    const parentStats = fstatSync(parentFd);
+    if (!parentStats.isDirectory()) {
+      throw new Error(`Source parent is not a directory: ${sourcePath}`);
+    }
+
+    return new PortableSourceHandleImpl(
+      sourcePath,
+      mainFd,
+      parentFd,
+      mainLeaf,
+      {
+        device: mainStats.dev,
+        inode: mainStats.ino,
+        type: "regular",
+        size: mainStats.size,
+      },
+      hashDescriptor(mainFd, mainStats.size),
+    );
+  } catch (error) {
+    if (mainFd !== null) {
+      try { closeSync(mainFd); } catch { /* best effort */ }
+    }
+    if (parentFd !== null) {
+      try { closeSync(parentFd); } catch { /* best effort */ }
+    }
+    diagnostics?.error(
+      DiagnosticCode.CDB_OPEN_FAILED,
+      `Failed to acquire source handle: ${error instanceof Error ? error.message : String(error)}`,
+      { source: { database: sourcePath } },
+    );
+    throw error;
+  }
+}
+
+/**
+ * The former Linux-native descriptor-relative implementation is retained
+ * below for reference while the public reader uses the portable v1 contract.
+ */
+function acquireNativeSourceHandle(
   sourcePath: string,
   _options: AcquireSourceOptions = {}
 ): SourceHandle {
@@ -486,5 +558,81 @@ class SourceHandleImpl implements SourceHandle {
         // Ignore close errors
       }
     });
+  }
+}
+
+class PortableSourceHandleImpl implements SourceHandle {
+  readonly sourcePath: string;
+  readonly mainFd: number;
+  readonly parentFd: number;
+  readonly mainLeaf: string;
+  readonly mainIdentity: FileIdentity;
+  readonly mainDigest: string;
+  private _closed = false;
+
+  constructor(
+    sourcePath: string,
+    mainFd: number,
+    parentFd: number,
+    mainLeaf: string,
+    mainIdentity: FileIdentity,
+    mainDigest: string,
+  ) {
+    this.sourcePath = sourcePath;
+    this.mainFd = mainFd;
+    this.parentFd = parentFd;
+    this.mainLeaf = mainLeaf;
+    this.mainIdentity = mainIdentity;
+    this.mainDigest = mainDigest;
+  }
+
+  async openMember(memberSuffix: "-wal" | "-shm") {
+    if (this._closed) throw new Error("SourceHandle is already closed");
+    let fd: number;
+    try {
+      fd = openSync(join(dirname(this.sourcePath), `${this.mainLeaf}${memberSuffix}`), constants.O_RDONLY);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) throw new Error(`Member ${memberSuffix} is not a regular file: ${this.sourcePath}`);
+      return { fd, stat, digest: hashDescriptor(fd, stat.size) };
+    } catch (error) {
+      try { closeSync(fd); } catch { /* best effort */ }
+      throw error;
+    }
+  }
+
+  async verifyMainIdentity(diagnostics?: DiagnosticCollector): Promise<void> {
+    if (this._closed) throw new Error("SourceHandle is already closed");
+    try {
+      const currentStats = fstatSync(this.mainFd);
+      const currentDigest = hashDescriptor(this.mainFd, currentStats.size);
+      if (
+        !currentStats.isFile() ||
+        currentStats.ino !== this.mainIdentity.inode ||
+        currentStats.dev !== this.mainIdentity.device ||
+        currentStats.size !== this.mainIdentity.size ||
+        currentDigest !== this.mainDigest
+      ) {
+        throw new SourceMutatedError(`Source main file changed while reading: ${this.sourcePath}`);
+      }
+    } catch (error) {
+      if (error instanceof SourceMutatedError) {
+        diagnostics?.error(DiagnosticCode.SOURCE_MUTATED_DURING_READ, error.message, {
+          source: { database: this.sourcePath },
+        });
+      }
+      throw error;
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this._closed) return;
+    this._closed = true;
+    try { closeSync(this.mainFd); } catch { /* best effort */ }
+    try { closeSync(this.parentFd); } catch { /* best effort */ }
   }
 }
